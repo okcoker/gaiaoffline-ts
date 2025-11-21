@@ -131,6 +131,15 @@ export async function processCSVFile(
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
 
+    // If gzip is corrupt, delete the file so it can be re-downloaded
+    if (errorMessage.includes("corrupt gzip stream")) {
+      try {
+        await Deno.remove(filePath);
+      } catch {
+        // empty
+      }
+    }
+
     db.markFileFailed(trackingTable, url);
 
     return {
@@ -177,22 +186,6 @@ export function formatDuration(ms: number): string {
     return `${minutes}m ${seconds % 60}s`;
   }
   return `${seconds}s`;
-}
-
-/**
- * Simple progress bar
- */
-export function renderProgressBar(
-  current: number,
-  total: number,
-  width = 40,
-): string {
-  const percentage = total > 0 ? (current / total) * 100 : 0;
-  const filled = Math.floor((width * current) / total);
-  const empty = width - filled;
-
-  const bar = "█".repeat(filled) + "░".repeat(empty);
-  return `[${bar}] ${percentage.toFixed(1)}% (${current}/${total})`;
 }
 
 /**

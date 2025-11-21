@@ -5,7 +5,6 @@ import {
   formatBytes,
   formatDuration,
   processCSVFile,
-  renderProgressBar,
 } from "./utils.ts";
 import type { CLIConfig } from "./config.ts";
 import { Logger } from "./types.ts";
@@ -138,10 +137,10 @@ export class PopulateCoordinator {
     for (let i = 0; i < urls.length; i += batchSize) {
       const batchUrls = urls.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
+      const startTime = Date.now();
 
-      this.logger.info(`📦 Batch ${batchNum}/${totalBatches}`);
       this.logger.info(
-        `⬇️ Downloading ${batchUrls.length} files in parallel to ${this.config.downloadDir}…`,
+        `⬇️ Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files) to ${this.config.downloadDir}`,
       );
       this.interval = setInterval(() => {
         this.printDownloadProgress();
@@ -149,6 +148,13 @@ export class PopulateCoordinator {
 
       // Download batch
       const downloadResults = await this.downloader.downloadBatch(batchUrls);
+
+      const downloadDuration = Date.now() - startTime;
+      this.logger.debug(
+        `✅ Batch ${batchNum} (${batchSize} files) downloaded in ${
+          formatDuration(downloadDuration)
+        }`,
+      );
 
       this.printDownloadProgress();
       clearInterval(this.interval);
@@ -160,6 +166,7 @@ export class PopulateCoordinator {
 
       for (const result of downloadResults) {
         if (result.success) {
+          this.logger.debug(`Processing ${result.filePath}…`);
           const processResult = await processCSVFile(
             result.filePath,
             result.url,
@@ -169,6 +176,7 @@ export class PopulateCoordinator {
           );
 
           if (processResult.success) {
+            this.logger.debug(`Processed ${result.filePath}`);
             this.stats.completedFiles++;
             this.stats.totalRecords += processResult.recordCount;
           } else {
@@ -187,11 +195,13 @@ export class PopulateCoordinator {
 
       // Show progress
       const progress = this.db.getTrackingProgress(trackingTable);
+      const percentage = progress.total > 0
+        ? (progress.completed / progress.total) * 100
+        : 0;
       this.logger.info(
-        `${renderProgressBar(progress.completed, progress.total)}`,
-      );
-      this.logger.info(
-        `✅ Completed: ${progress.completed} | ❌ Failed: ${progress.failed} | 📊 Total records: ${this.stats.totalRecords.toLocaleString()}`,
+        `✅ Completed: ${progress.completed} | ❌ Failed: ${progress.failed} | 🗄️ Total records: ${this.stats.totalRecords.toLocaleString()} | ${
+          percentage.toFixed(1)
+        }% (${progress.completed}/${progress.total})`,
       );
     }
   }
