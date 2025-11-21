@@ -1,5 +1,4 @@
-import { parse } from "https://deno.land/std@0.218.0/csv/parse.ts";
-import { readAll } from "https://deno.land/std@0.218.0/io/read_all.ts";
+import { CsvParseStream } from "@std/csv/parse-stream";
 import {
   GaiaDatabase,
   type GaiaRecord,
@@ -10,39 +9,67 @@ import type { CLIConfig } from "./config.ts";
 import { Logger, LogLevel } from "./types.ts";
 
 /**
- * Parse a gzipped CSV file and return records
+ * Stream a gzipped CSV file in chunks
  */
-export async function parseGzippedCSV(
+async function* streamGzippedCSV(
   filePath: string,
-  columns: string[],
-  skipRows = 1000,
-): Promise<GaiaRecord[]> {
-  // Read and decompress the file
+  columnsToKeep: string[],
+  chunkSize: number,
+): AsyncGenerator<GaiaRecord[]> {
   const file = await Deno.open(filePath, { read: true });
-  const compressed = await readAll(file);
-  file.close();
+  const columnsToKeepSet = new Set(columnsToKeep);
 
-  // Decompress using DecompressionStream
-  const stream = new Response(compressed).body!
-    .pipeThrough(new DecompressionStream("gzip"));
+  try {
+    const csvStream = file.readable
+      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(new TextDecoderStream())
+      .pipeThrough(
+        new CsvParseStream({
+          comment: "#",
+        }),
+      );
 
-  console.log("utils.ts:30", stream);
+    let chunk: GaiaRecord[] = [];
+    let headers: string[] = [];
+    let isFirstRow = true;
 
-  const decompressed = await new Response(stream).text();
+    for await (const record of csvStream) {
+      if (isFirstRow) {
+        headers = Object.values(record);
+        isFirstRow = false;
+        continue;
+      }
 
-  console.log("utils.ts:32", decompressed);
+      const recordObj: Record<string, unknown> = {};
+      const values = Object.values(record);
+      for (let i = 0; i < headers.length; i++) {
+        const col = headers[i];
+        if (columnsToKeepSet.has(col)) {
+          const value = values[i];
+          recordObj[col] = parseGaiaRecord(col, value);
+        }
+      }
 
-  // Split into lines and skip rows
-  const lines = decompressed.split("\n");
-  const dataLines = lines.slice(skipRows);
+      chunk.push(recordObj as GaiaRecord);
 
-  // Parse CSV
-  const parsed = parse(dataLines.join("\n"), {
-    skipFirstRow: true,
-    columns,
-  });
+      if (chunk.length >= chunkSize) {
+        yield chunk;
+        chunk = [];
+      }
+    }
 
-  return parsed as GaiaRecord[];
+    // Yield remaining records
+    if (chunk.length > 0) {
+      yield chunk;
+    }
+  } catch (error) {
+    try {
+      file.close();
+    } catch {
+      // Ignore if already closed
+    }
+    throw error;
+  }
 }
 
 /**
@@ -63,7 +90,7 @@ export function filterByMagnitude(
 }
 
 /**
- * Process a single CSV file: download, parse, filter, and insert
+ * Process a single CSV file: stream, parse in chunks, filter, and insert
  */
 export async function processCSVFile(
   filePath: string,
@@ -73,43 +100,37 @@ export async function processCSVFile(
   trackingTable: string,
 ): Promise<{ success: boolean; recordCount: number; error?: string }> {
   try {
-    // Check if already processed
     if (db.isFileProcessed(trackingTable, url)) {
       console.log(`Skipping already processed file: ${url}`);
       return { success: true, recordCount: 0 };
     }
 
-    // Parse CSV
-    const records = await parseGzippedCSV(
-      filePath,
-      config.storedColumns,
-      // Skip first 1000 rows like the Python version
-      // Seems like the first 100 rows are comments
-      1000,
-    );
+    let totalInserted = 0;
 
-    console.log("utils.ts:86", records);
+    for await (
+      const chunk of streamGzippedCSV(
+        filePath,
+        config.storedColumns,
+        config.csvChunkSize,
+      )
+    ) {
+      // Filter by magnitude
+      const filteredRecords = filterByMagnitude(
+        chunk,
+        config.magnitudeLimit,
+        config.zeropoints[0],
+      );
 
-    // Filter by magnitude
-    const filteredRecords = filterByMagnitude(
-      records,
-      config.magnitudeLimit,
-      config.zeropoints[0],
-    );
+      const insertedCount = db.insertGaiaRecords(filteredRecords);
+      totalInserted += insertedCount;
+    }
 
-    console.log("utils.ts:95", filteredRecords);
-
-    // Insert into database (sequential)
-    const insertedCount = db.insertGaiaRecords(filteredRecords);
-
-    console.log("utils.ts:100", insertedCount);
-
-    // Mark as completed
     db.markFileCompleted(trackingTable, url);
 
-    return { success: true, recordCount: insertedCount };
+    return { success: true, recordCount: totalInserted };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
+
     db.markFileFailed(trackingTable, url);
 
     return {
@@ -118,9 +139,10 @@ export async function processCSVFile(
       error: errorMessage,
     };
   } finally {
-    // Clean up downloaded file
     try {
-      // await Deno.remove(filePath);
+      if (config.cleanUpDownloadedFiles) {
+        await Deno.remove(filePath);
+      }
     } catch {
       // Ignore cleanup errors
     }
@@ -190,37 +212,39 @@ export async function processTmassXmatchFile(
       return { success: true, recordCount: 0 };
     }
 
-    // Parse CSV with specific columns for crossmatch
+    // Parse CSV using streaming parser
     const file = await Deno.open(filePath, { read: true });
-    const compressed = await readAll(file);
-    file.close();
 
-    const stream = new Response(compressed).body!.pipeThrough(
-      new DecompressionStream("gzip"),
-    );
-    const decompressed = await new Response(stream).text();
-
-    // Parse CSV
-    const parsed = parse(decompressed, {
-      skipFirstRow: true,
-      columns: ["source_id", "original_ext_source_id"],
-    }) as Array<{ source_id: string; original_ext_source_id: string }>;
+    const csvStream = file.readable
+      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(new TextDecoderStream())
+      .pipeThrough(
+        new CsvParseStream({
+          skipFirstRow: true,
+        }),
+      );
 
     // Filter: only keep records that exist in gaiadr3 table
-    // Create temp records and check against existing Gaia data
     const xmatchRecords: TmassXmatchRecord[] = [];
 
-    for (const row of parsed) {
-      // Check if this Gaia source exists in our database
-      const exists = db
-        .getRecordCount(`gaiadr3 WHERE source_id = '${row.source_id}'`);
-      if (exists > 0) {
-        xmatchRecords.push({
-          gaiadr3_source_id: row.source_id,
-          tmass_source_id: row.original_ext_source_id,
-        });
+    for await (const row of csvStream) {
+      const sourceId = row.source_id;
+      const tmassSourceId = row.original_ext_source_id;
+
+      if (sourceId && tmassSourceId) {
+        // Check if this Gaia source exists in our database
+        const exists = db
+          .getRecordCount(`gaiadr3 WHERE source_id = '${sourceId}'`);
+        if (exists > 0) {
+          xmatchRecords.push({
+            gaiadr3_source_id: sourceId,
+            tmass_source_id: tmassSourceId,
+          });
+        }
       }
     }
+
+    file.close();
 
     // Insert crossmatch records
     const insertedCount = db.insertTmassXmatchRecords(xmatchRecords);
@@ -265,28 +289,30 @@ export async function processTmassFile(
       return { success: true, recordCount: 0 };
     }
 
-    // Read and decompress the 2MASS file (pipe-delimited format)
+    // Stream pipe-delimited 2MASS file line-by-line
     const file = await Deno.open(filePath, { read: true });
-    const compressed = await readAll(file);
-    file.close();
 
-    const stream = new Response(compressed).body!.pipeThrough(
-      new DecompressionStream("gzip"),
-    );
-    const decompressed = await new Response(stream).text();
+    const csvStream = file.readable
+      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(new TextDecoderStream())
+      .pipeThrough(
+        new CsvParseStream({
+          separator: "|", // Pipe-delimited
+          skipFirstRow: false, // No header row
+        }),
+      );
 
     // Parse pipe-delimited format
     // Columns we need: 5=tmass_source_id, 6=j_m, 10=h_m, 14=k_m
-    const lines = decompressed.split("\n");
     const tmassRecords: TmassRecord[] = [];
 
-    for (const line of lines) {
-      if (!line.trim()) continue;
+    for await (const cols of csvStream) {
+      // cols is an array of column values
+      const colArray = Object.values(cols);
 
-      const cols = line.split("|");
-      if (cols.length < 15) continue;
+      if (colArray.length < 15) continue;
 
-      const tmassSourceId = cols[5]?.trim();
+      const tmassSourceId = colArray[5]?.trim();
       if (!tmassSourceId) continue;
 
       // Get the Gaia source ID from xmatch table
@@ -297,9 +323,9 @@ export async function processTmassFile(
         .get(tmassSourceId) as { gaiadr3_source_id: string } | undefined;
 
       if (xmatchResult) {
-        const jMag = cols[6]?.trim();
-        const hMag = cols[10]?.trim();
-        const kMag = cols[14]?.trim();
+        const jMag = colArray[6]?.trim();
+        const hMag = colArray[10]?.trim();
+        const kMag = colArray[14]?.trim();
 
         tmassRecords.push({
           gaiadr3_source_id: xmatchResult.gaiadr3_source_id,
@@ -310,6 +336,8 @@ export async function processTmassFile(
         });
       }
     }
+
+    file.close();
 
     // Insert 2MASS records
     const insertedCount = db.insertTmassRecords(tmassRecords);
@@ -380,3 +408,32 @@ export const createLogger = (level: LogLevel, tag: string): Logger => {
     },
   };
 };
+
+function parseGaiaRecord(column: string, value: unknown): unknown {
+  if (
+    column === "source_id" ||
+    column === "solution_id" ||
+    column === "designation" ||
+    value === ""
+  ) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    if (value.toLowerCase() === "null") {
+      return null;
+    }
+    if (value.toLowerCase() === "false") {
+      return false;
+    }
+    if (value.toLowerCase() === "true") {
+      return true;
+    }
+  }
+
+  if (column === "source_id" || value === "" || value === null) {
+    return value;
+  }
+  const num = Number(value);
+  return isNaN(num) ? value : num;
+}

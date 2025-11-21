@@ -41,8 +41,7 @@ export async function populateCommand(
   };
 
   try {
-    const stats = await coordinator.populateGaiaDR3(fileLimit);
-    console.log(JSON.stringify(stats, null, 2));
+    await coordinator.populateGaiaDR3(fileLimit);
     await cleanup();
   } catch (error) {
     await cleanup();

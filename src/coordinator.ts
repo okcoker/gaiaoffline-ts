@@ -1,5 +1,5 @@
 import { GaiaDatabase } from "./database.ts";
-import { getCSVUrls, ParallelDownloader } from "./downloader.ts";
+import { ParallelDownloader } from "./downloader.ts";
 import {
   createLogger,
   formatDuration,
@@ -85,11 +85,9 @@ export class PopulateCoordinator {
     await this.processBatchedPipeline(pendingUrls, "file_tracking_gaiadr3");
 
     // Create indices
-    this.logger.debug("\n📊 Creating database indices…");
     this.db.createIndices();
 
     // Optimize
-    this.logger.debug("🔧 Optimizing database…");
     this.db.optimize();
 
     this.stats.duration = Date.now() - startTime;
@@ -121,45 +119,7 @@ export class PopulateCoordinator {
       );
 
       // Download batch
-      // const downloadResults = await this.downloader.downloadBatch(batchUrls);
-
-      const downloadResults = [
-        {
-          "url":
-            "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/GaiaSource_000000-003111.csv.gz",
-          "filePath":
-            "/var/folders/qj/lxh91jfx75n0z_k9nlsxfh9h0000gn/T/GaiaSource_000000-003111.csv.gz",
-          "success": true,
-        },
-        {
-          "url":
-            "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/GaiaSource_003112-005263.csv.gz",
-          "filePath":
-            "/var/folders/qj/lxh91jfx75n0z_k9nlsxfh9h0000gn/T/GaiaSource_003112-005263.csv.gz",
-          "success": true,
-        },
-        {
-          "url":
-            "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/GaiaSource_005264-006601.csv.gz",
-          "filePath":
-            "/var/folders/qj/lxh91jfx75n0z_k9nlsxfh9h0000gn/T/GaiaSource_005264-006601.csv.gz",
-          "success": true,
-        },
-        {
-          "url":
-            "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/GaiaSource_006602-007952.csv.gz",
-          "filePath":
-            "/var/folders/qj/lxh91jfx75n0z_k9nlsxfh9h0000gn/T/GaiaSource_006602-007952.csv.gz",
-          "success": true,
-        },
-        {
-          "url":
-            "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/GaiaSource_007953-010234.csv.gz",
-          "filePath":
-            "/var/folders/qj/lxh91jfx75n0z_k9nlsxfh9h0000gn/T/GaiaSource_007953-010234.csv.gz",
-          "success": true,
-        },
-      ];
+      const downloadResults = await this.downloader.downloadBatch(batchUrls);
 
       if (downloadResults.length > 0) {
         // Process successful downloads sequentially
@@ -195,8 +155,8 @@ export class PopulateCoordinator {
 
       // Show progress
       const progress = this.db.getTrackingProgress(trackingTable);
-      console.log(
-        `\n${renderProgressBar(progress.completed, progress.total)}`,
+      this.logger.info(
+        `${renderProgressBar(progress.completed, progress.total)}`,
       );
       this.logger.info(
         `✅ Completed: ${progress.completed} | ❌ Failed: ${progress.failed} | 📊 Total records: ${this.stats.totalRecords.toLocaleString()}`,
@@ -208,8 +168,8 @@ export class PopulateCoordinator {
    * Print final summary
    */
   private printSummary(): void {
-    this.logger.info("\n" + "=".repeat(60));
-    this.logger.info("📊 Population Summary");
+    this.logger.info("=".repeat(60));
+    this.logger.info("Population Summary");
     this.logger.info("=".repeat(60));
     this.logger.info(`Total files:      ${this.stats.totalFiles}`);
     this.logger.info(`Completed:        ${this.stats.completedFiles}`);
@@ -228,6 +188,32 @@ export class PopulateCoordinator {
    * Clean up resources
    */
   async cleanup(): Promise<void> {
-    await this.downloader.cleanup();
+    // await this.downloader.cleanup();
   }
+}
+
+/**
+ * Fetch all CSV URLs from a Gaia directory listing
+ */
+export async function getCSVUrls(baseUrl: string): Promise<string[]> {
+  const response = await fetch(baseUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${baseUrl}: ${response.statusText}`);
+  }
+
+  const html = await response.text();
+
+  // Simple regex to extract .csv.gz or .gz links
+  const linkRegex = /href="([^"]+\.(csv\.gz|gz))"/g;
+  const urls: string[] = [];
+
+  let match;
+  while ((match = linkRegex.exec(html)) !== null) {
+    const link = match[1];
+    // Build full URL if it's a relative path
+    const fullUrl = link.startsWith("http") ? link : baseUrl + link;
+    urls.push(fullUrl);
+  }
+
+  return urls;
 }

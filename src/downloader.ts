@@ -5,6 +5,7 @@ import { formatBytes } from "./utils.ts";
 
 export interface DownloadProgress {
   url: string;
+  filePath: string;
   status: "pending" | "downloading" | "completed" | "failed";
   bytesDownloaded: number;
   totalBytes: number;
@@ -65,6 +66,7 @@ export class ParallelDownloader {
     // Initialize progress tracking
     this.progress.set(url, {
       url,
+      filePath,
       status: "downloading",
       bytesDownloaded: 0,
       totalBytes: 0,
@@ -77,9 +79,9 @@ export class ParallelDownloader {
         const stat = await Deno.stat(filePath);
         existingSize = stat.size;
         this.logger.debug(
-          `File ${url} already exists, resuming from ${
+          `File ${url} already exists, attempting to resume from ${
             formatBytes(existingSize)
-          } bytes`,
+          }`,
         );
       }
 
@@ -105,6 +107,7 @@ export class ParallelDownloader {
       // Update progress
       this.progress.set(url, {
         url,
+        filePath,
         status: "downloading",
         bytesDownloaded: existingSize,
         totalBytes,
@@ -126,7 +129,7 @@ export class ParallelDownloader {
             const { done, value } = await reader.read();
             if (done) {
               this.logger.debug(
-                `✅ Downloaded ${url}: ${formatBytes(downloadedBytes)}`,
+                `Downloaded ${url}: ${formatBytes(downloadedBytes)} ✅`,
               );
               break;
             }
@@ -141,11 +144,14 @@ export class ParallelDownloader {
             // Update progress
             this.progress.set(url, {
               url,
+              filePath,
               status: "downloading",
               bytesDownloaded: downloadedBytes,
               totalBytes,
             });
           }
+        } catch (error: unknown) {
+          this.logger.error(`Failed to download file ${url}: ${error}`);
         } finally {
           file.close();
         }
@@ -154,6 +160,7 @@ export class ParallelDownloader {
       // Mark as completed
       this.progress.set(url, {
         url,
+        filePath,
         status: "completed",
         bytesDownloaded: totalBytes,
         totalBytes,
@@ -177,6 +184,7 @@ export class ParallelDownloader {
 
       this.progress.set(url, {
         url,
+        filePath,
         status: "failed",
         bytesDownloaded: currentBytes,
         totalBytes: totalBytes,
@@ -212,44 +220,4 @@ export class ParallelDownloader {
   clearProgress(): void {
     this.progress.clear();
   }
-
-  /**
-   * Clean up temp directory
-   */
-  async cleanup(): Promise<void> {
-    try {
-      const files = Array.from(this.progress.values()).map((progress) =>
-        progress.url
-      );
-      await Promise.all(files.map((file) => Deno.remove(file)));
-    } catch (error: unknown) {
-      this.logger.error("Failed to cleanup temp directory:", error);
-    }
-  }
-}
-
-/**
- * Fetch all CSV URLs from a Gaia directory listing
- */
-export async function getCSVUrls(baseUrl: string): Promise<string[]> {
-  const response = await fetch(baseUrl);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch ${baseUrl}: ${response.statusText}`);
-  }
-
-  const html = await response.text();
-
-  // Simple regex to extract .csv.gz or .gz links
-  const linkRegex = /href="([^"]+\.(csv\.gz|gz))"/g;
-  const urls: string[] = [];
-
-  let match;
-  while ((match = linkRegex.exec(html)) !== null) {
-    const link = match[1];
-    // Build full URL if it's a relative path
-    const fullUrl = link.startsWith("http") ? link : baseUrl + link;
-    urls.push(fullUrl);
-  }
-
-  return urls;
 }

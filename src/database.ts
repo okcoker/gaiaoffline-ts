@@ -290,7 +290,7 @@ export class GaiaDatabase {
    * Create indices on commonly queried columns
    */
   createIndices(): void {
-    this.logger.debug("Creating database indices...");
+    this.logger.debug("Creating database indices…");
 
     const indices = [
       "CREATE INDEX IF NOT EXISTS idx_source_id ON gaiadr3(source_id)",
@@ -319,7 +319,7 @@ export class GaiaDatabase {
    * Vacuum and optimize the database
    */
   optimize(): void {
-    this.logger.debug("Optimizing database...");
+    this.logger.debug("Optimizing database…");
     this.db.exec("VACUUM");
     this.db.exec("ANALYZE");
     this.logger.debug("Database optimized");
