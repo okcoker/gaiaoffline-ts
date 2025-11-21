@@ -139,8 +139,9 @@ export class PopulateCoordinator {
       const batchNum = Math.floor(i / batchSize) + 1;
       const startTime = Date.now();
 
+      const emoji = batchSize === 1 ? "⬇️" : "📦";
       this.logger.info(
-        `⬇️ Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files) to ${this.config.downloadDir}`,
+        `${emoji} Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files) to ${this.config.downloadDir}`,
       );
       this.interval = setInterval(() => {
         this.printDownloadProgress();
@@ -159,9 +160,13 @@ export class PopulateCoordinator {
       this.printDownloadProgress();
       clearInterval(this.interval);
 
+      debugger;
+
       if (downloadResults.length > 0) {
         // Process successful downloads sequentially
-        this.logger.debug(`💾 Inserting batch into database…`);
+        this.logger.info(
+          `💾 Inserting batch ${batchNum}/${totalBatches} into database`,
+        );
       }
 
       for (const result of downloadResults) {
@@ -198,11 +203,15 @@ export class PopulateCoordinator {
       const percentage = progress.total > 0
         ? (progress.completed / progress.total) * 100
         : 0;
-      this.logger.info(
-        `✅ Completed: ${progress.completed} | ❌ Failed: ${progress.failed} | 🗄️ Total records: ${this.stats.totalRecords.toLocaleString()} | ${
-          percentage.toFixed(1)
-        }% (${progress.completed}/${progress.total})`,
-      );
+
+      const parts = [
+        `✅ Completed: ${progress.completed}`,
+        progress.failed > 0 ? `❌ Failed: ${progress.failed}` : null,
+        `🗄️ Total records: ${this.stats.totalRecords.toLocaleString()}`,
+        `${percentage.toFixed(1)}% (${progress.completed}/${progress.total})`,
+      ].filter(Boolean).join(" | ");
+
+      this.logger.info(parts + "\n");
     }
   }
 

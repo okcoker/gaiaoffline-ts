@@ -358,6 +358,11 @@ export async function processTmassFile(
   }
 }
 
+function getLogPrefix(level: LogLevel, tag: string): string {
+  return [`[${level}]`, `[${new Date().toISOString()}]`, `[${tag}]`]
+    .join(" ");
+}
+
 export const createLogger = (level: LogLevel, tag: string): Logger => {
   const levels: Record<LogLevel, number> = {
     DEBUG: 0,
@@ -365,38 +370,34 @@ export const createLogger = (level: LogLevel, tag: string): Logger => {
     WARN: 2,
     ERROR: 3,
   };
-  const prefix = [`[${level}]`, `[${new Date().toISOString()}]`, `[${tag}]`]
-    .join(" ");
 
   return {
-    log(...args: unknown[]) {
-      if (levels[level] > levels["DEBUG"]) {
-        return;
-      }
-      console.log(prefix, ...args);
-    },
     error(...args: unknown[]) {
       if (levels[level] > levels["ERROR"]) {
         return;
       }
+      const prefix = getLogPrefix("ERROR", tag);
       console.error(prefix, ...args);
     },
     warn(...args: unknown[]) {
       if (levels[level] > levels["WARN"]) {
         return;
       }
+      const prefix = getLogPrefix("WARN", tag);
       console.warn(prefix, ...args);
     },
     info(...args: unknown[]) {
       if (levels[level] > levels["INFO"]) {
         return;
       }
+      const prefix = getLogPrefix("INFO", tag);
       console.info(prefix, ...args);
     },
     debug(...args: unknown[]) {
       if (levels[level] > levels["DEBUG"]) {
         return;
       }
+      const prefix = getLogPrefix("DEBUG", tag);
       console.debug(prefix, ...args);
     },
   };
