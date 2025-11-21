@@ -1,7 +1,8 @@
 import { GaiaDatabase } from "./database.ts";
-import { ParallelDownloader } from "./downloader.ts";
+import { type DownloadProgress, ParallelDownloader } from "./downloader.ts";
 import {
   createLogger,
+  formatBytes,
   formatDuration,
   processCSVFile,
   renderProgressBar,
@@ -32,6 +33,7 @@ export class PopulateCoordinator {
     duration: 0,
   };
   private logger: Logger;
+  private interval: number = 0;
 
   constructor(db: GaiaDatabase, config: CLIConfig) {
     this.db = db;
@@ -52,11 +54,9 @@ export class PopulateCoordinator {
 
     const startTime = Date.now();
 
-    // Initialize
     await this.downloader.initialize();
     this.db.initialize();
 
-    // Get all CSV URLs
     this.logger.info("📋 Fetching list of Gaia DR3 files…");
     const allUrls = await getCSVUrls(
       "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/",
@@ -67,7 +67,6 @@ export class PopulateCoordinator {
 
     this.logger.debug(`Found ${urls.length} files to process…`);
 
-    // Initialize tracking
     this.db.initializeTracking("file_tracking_gaiadr3", urls);
 
     // Filter out already processed files
@@ -84,10 +83,7 @@ export class PopulateCoordinator {
     // Process in batches: download N files in parallel, then insert sequentially
     await this.processBatchedPipeline(pendingUrls, "file_tracking_gaiadr3");
 
-    // Create indices
     this.db.createIndices();
-
-    // Optimize
     this.db.optimize();
 
     this.stats.duration = Date.now() - startTime;
@@ -95,6 +91,36 @@ export class PopulateCoordinator {
     this.printSummary();
 
     return this.stats;
+  }
+
+  private printDownloadProgress() {
+    if (this.config.logLevel !== "INFO") {
+      return;
+    }
+
+    const aggregated = this.downloader.getProgress().reduce(
+      (acc, progress) => {
+        acc.status[progress.status] = (acc.status[progress.status] || 0) +
+          1;
+        acc.downloaded += progress.bytesDownloaded;
+        acc.total += progress.totalBytes;
+        return acc;
+      },
+      {
+        status: {} as Record<DownloadProgress["status"], number>,
+        downloaded: 0,
+        total: 1,
+      },
+    );
+    this.logger.info(
+      `Download progress: ${formatBytes(aggregated.downloaded)} / ${
+        formatBytes(aggregated.total)
+      } (${
+        Object.entries(aggregated.status).map(([status, count]) =>
+          `${status}: ${count}`
+        ).join(", ")
+      })`,
+    );
   }
 
   /**
@@ -113,13 +139,19 @@ export class PopulateCoordinator {
       const batchUrls = urls.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
 
-      this.logger.info(`\n📦 Batch ${batchNum}/${totalBatches}`);
-      this.logger.debug(
-        `⬇️ Downloading ${batchUrls.length} files in parallel…`,
+      this.logger.info(`📦 Batch ${batchNum}/${totalBatches}`);
+      this.logger.info(
+        `⬇️ Downloading ${batchUrls.length} files in parallel to ${this.config.downloadDir}…`,
       );
+      this.interval = setInterval(() => {
+        this.printDownloadProgress();
+      }, 15000);
 
       // Download batch
       const downloadResults = await this.downloader.downloadBatch(batchUrls);
+
+      this.printDownloadProgress();
+      clearInterval(this.interval);
 
       if (downloadResults.length > 0) {
         // Process successful downloads sequentially
@@ -187,8 +219,9 @@ export class PopulateCoordinator {
   /**
    * Clean up resources
    */
-  async cleanup(): Promise<void> {
+  cleanup() {
     // await this.downloader.cleanup();
+    clearInterval(this.interval);
   }
 }
 

@@ -5,7 +5,6 @@ import { formatBytes } from "./utils.ts";
 
 export interface DownloadProgress {
   url: string;
-  filePath: string;
   status: "pending" | "downloading" | "completed" | "failed";
   bytesDownloaded: number;
   totalBytes: number;
@@ -66,7 +65,6 @@ export class ParallelDownloader {
     // Initialize progress tracking
     this.progress.set(url, {
       url,
-      filePath,
       status: "downloading",
       bytesDownloaded: 0,
       totalBytes: 0,
@@ -92,8 +90,39 @@ export class ParallelDownloader {
       }
       const response = await fetch(url, { headers });
 
-      if (!response.ok && response.status !== 206) {
+      // Handle 416 Range Not Satisfiable - partial file is invalid
+      if (response.status === 416) {
+        this.logger.debug(
+          `Range not satisfiable for ${url}, deleting partial file and retrying from scratch`,
+        );
+        // Delete corrupted/invalid partial file
+        try {
+          await Deno.remove(filePath);
+        } catch {
+          // Ignore if file doesn't exist
+        }
+        return this.downloadFile(url);
+      }
+
+      if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      // Validate Content-Range header when resuming
+      if (existingSize > 0 && response.status === 206) {
+        const contentRange = response.headers.get("content-range");
+        if (contentRange && !contentRange.includes(`${existingSize}-`)) {
+          this.logger.debug(
+            `Server didn't honor range request for ${url}, starting over`,
+          );
+          // Server returned wrong range, delete and start over
+          try {
+            await Deno.remove(filePath);
+          } catch {
+            // Ignore if file doesn't exist
+          }
+          return this.downloadFile(url);
+        }
       }
 
       // Get total file size
@@ -107,7 +136,6 @@ export class ParallelDownloader {
       // Update progress
       this.progress.set(url, {
         url,
-        filePath,
         status: "downloading",
         bytesDownloaded: existingSize,
         totalBytes,
@@ -144,7 +172,6 @@ export class ParallelDownloader {
             // Update progress
             this.progress.set(url, {
               url,
-              filePath,
               status: "downloading",
               bytesDownloaded: downloadedBytes,
               totalBytes,
@@ -160,7 +187,6 @@ export class ParallelDownloader {
       // Mark as completed
       this.progress.set(url, {
         url,
-        filePath,
         status: "completed",
         bytesDownloaded: totalBytes,
         totalBytes,
@@ -184,7 +210,6 @@ export class ParallelDownloader {
 
       this.progress.set(url, {
         url,
-        filePath,
         status: "failed",
         bytesDownloaded: currentBytes,
         totalBytes: totalBytes,
