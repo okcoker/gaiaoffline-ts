@@ -263,19 +263,71 @@ export class ParallelDownloader {
   /**
    * Stream download without saving to disk
    * Returns ReadableStream for immediate processing
+   * Includes retry logic with exponential backoff
    */
-  async streamDownload(url: string): Promise<ReadableStream<Uint8Array>> {
-    const response = await fetch(url);
+  async streamDownload(
+    url: string,
+    maxRetries = 3,
+    retryDelay = 1000,
+  ): Promise<ReadableStream<Uint8Array>> {
+    let lastError: Error | null = null;
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = retryDelay * Math.pow(2, attempt - 1);
+          this.logger.debug(
+            `Retry attempt ${attempt}/${maxRetries} for ${url} after ${delay}ms`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+
+        const response = await fetch(url);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        if (!response.body) {
+          throw new Error(`No response body for ${url}`);
+        }
+
+        return response.body;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        const isRetryable = this.isRetryableError(lastError);
+
+        if (!isRetryable || attempt === maxRetries) {
+          this.logger.error(
+            `Failed to stream ${url} after ${attempt + 1} attempts: ${lastError.message}`,
+          );
+          throw lastError;
+        }
+
+        this.logger.debug(
+          `Retryable error for ${url}: ${lastError.message}`,
+        );
+      }
     }
 
-    if (!response.body) {
-      throw new Error(`No response body for ${url}`);
-    }
+    throw lastError || new Error("Unknown error");
+  }
 
-    return response.body;
+  /**
+   * Check if an error is retryable (network issues, timeouts, etc.)
+   */
+  private isRetryableError(error: Error): boolean {
+    const message = error.message.toLowerCase();
+    return (
+      message.includes("connection") ||
+      message.includes("timeout") ||
+      message.includes("network") ||
+      message.includes("econnreset") ||
+      message.includes("enotfound") ||
+      message.includes("socket") ||
+      message.includes("aborted") ||
+      message.includes("body from connection")
+    );
   }
 
   /**

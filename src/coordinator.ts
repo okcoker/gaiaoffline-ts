@@ -273,16 +273,37 @@ export class PopulateCoordinator {
 
       // Accumulate all records for bulk insert
       const allRecords: GaiaRecord[] = [];
+      const networkErrors: string[] = [];
+
       for (const result of processResults) {
         if (result.records) {
           allRecords.push(...result.records);
         } else if (result.error) {
           this.stats.failedFiles++;
           this.db.markFileFailed(trackingTable, result.url);
+
+          // Track network errors separately for helpful message
+          const isNetworkError = result.error.toLowerCase().includes(
+            "connection",
+          ) ||
+            result.error.toLowerCase().includes("network") ||
+            result.error.toLowerCase().includes("body from connection");
+
+          if (isNetworkError) {
+            networkErrors.push(result.url);
+          }
+
           this.logger.error(
             `❌ Failed to process ${result.url}: ${result.error}`,
           );
         }
+      }
+
+      // Show helpful message for network errors
+      if (networkErrors.length > 0) {
+        this.logger.info(
+          `💡 ${networkErrors.length} file(s) failed due to network issues. Run the command again to retry failed files.`,
+        );
       }
 
       // Single bulk insert for entire batch
