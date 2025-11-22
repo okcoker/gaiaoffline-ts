@@ -11,12 +11,25 @@ export interface DownloadProgress {
   error?: string;
 }
 
-export interface DownloadResult {
+export type DownloadResult = {
   url: string;
   filePath: string;
-  success: boolean;
-  error?: string;
-}
+  success: true;
+} | {
+  url: string;
+  success: false;
+  error: string;
+};
+
+export type StreamResult = {
+  url: string;
+  stream: ReadableStream<Uint8Array>;
+  success: true;
+} | {
+  url: string;
+  success: false;
+  error: string;
+};
 
 export class ParallelDownloader {
   private tempDir: string;
@@ -37,12 +50,11 @@ export class ParallelDownloader {
   }
 
   /**
-   * Download multiple URLs in parallel with batching
+   * Download multiple URLs in parallel
    */
   async downloadBatch(urls: string[]): Promise<DownloadResult[]> {
     const results: DownloadResult[] = [];
 
-    // Process in batches to avoid overwhelming the network
     for (let i = 0; i < urls.length; i += this.parallelLimit) {
       const batch = urls.slice(i, i + this.parallelLimit);
       const batchResults = await Promise.all(
@@ -52,6 +64,30 @@ export class ParallelDownloader {
     }
 
     return results;
+  }
+
+  /**
+   * Start downloads and return streams immediately for processing
+   * This allows processing to happen concurrently with downloading
+   */
+  async streamBatch(urls: string[]): Promise<StreamResult[]> {
+    // Start all downloads in parallel up to limit
+    const streamPromises = urls.map(async (url): Promise<StreamResult> => {
+      try {
+        const stream = await this.streamDownload(url);
+        return { url, stream, success: true };
+      } catch (error) {
+        const errorMessage = error instanceof Error
+          ? error.message
+          : String(error);
+        this.logger.error(
+          `Failed to create download stream for ${url}: ${errorMessage}`,
+        );
+        return { url, success: false, error: errorMessage };
+      }
+    });
+
+    return await Promise.all(streamPromises);
   }
 
   /**
@@ -218,11 +254,28 @@ export class ParallelDownloader {
 
       return {
         url,
-        filePath: "",
         success: false,
         error: errorMessage,
       };
     }
+  }
+
+  /**
+   * Stream download without saving to disk
+   * Returns ReadableStream for immediate processing
+   */
+  async streamDownload(url: string): Promise<ReadableStream<Uint8Array>> {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    if (!response.body) {
+      throw new Error(`No response body for ${url}`);
+    }
+
+    return response.body;
   }
 
   /**

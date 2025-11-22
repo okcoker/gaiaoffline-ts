@@ -1,7 +1,7 @@
 import { Database } from "@db/sqlite";
 import type { CLIConfig } from "./config.ts";
 import { Logger } from "./types.ts";
-import { createLogger } from "./utils.ts";
+import { createLogger, formatDuration } from "./utils.ts";
 
 export interface FileTrackingRecord {
   url: string;
@@ -187,6 +187,11 @@ export class GaiaDatabase {
   insertGaiaRecords(records: GaiaRecord[]): number {
     if (records.length === 0) return 0;
 
+    const insertStartTime = Date.now();
+    this.logger.debug(
+      `Inserting ${records.length.toLocaleString()} records…`,
+    );
+
     // Build dynamic INSERT statement based on columns
     const columns = this.config.storedColumns.join(", ");
     const placeholders = this.config.storedColumns.map(() => "?").join(", ");
@@ -206,6 +211,11 @@ export class GaiaDatabase {
     })();
 
     stmt.finalize();
+
+    const insertDuration = Date.now() - insertStartTime;
+    this.logger.debug(
+      `Database insert took ${formatDuration(insertDuration)}`,
+    );
     return insertedCount;
   }
 
@@ -290,6 +300,7 @@ export class GaiaDatabase {
    * Create indices on commonly queried columns
    */
   createIndices(): void {
+    const startTime = Date.now();
     this.logger.debug("Creating database indices…");
 
     const indices = [
@@ -312,17 +323,24 @@ export class GaiaDatabase {
       }
     }
 
-    this.logger.debug("Indices created successfully");
+    const duration = Date.now() - startTime;
+    this.logger.debug(
+      `Indices created successfully in ${formatDuration(duration)}`,
+    );
   }
 
   /**
    * Vacuum and optimize the database
    */
   optimize(): void {
+    const startTime = Date.now();
     this.logger.debug("Optimizing database…");
     this.db.exec("VACUUM");
     this.db.exec("ANALYZE");
-    this.logger.debug("Database optimized");
+    const duration = Date.now() - startTime;
+    this.logger.debug(
+      `Database optimized in ${formatDuration(duration)}`,
+    );
   }
 
   /**
@@ -335,6 +353,7 @@ export class GaiaDatabase {
     magnitudeLimit?: [number, number],
     tmassCrossmatch = false,
   ): GaiaRecord[] {
+    const startTime = Date.now();
     const radiusRad = (radius * Math.PI) / 180;
     const raRad = (ra * Math.PI) / 180;
     const decRad = (dec * Math.PI) / 180;
@@ -390,7 +409,12 @@ export class GaiaDatabase {
     const query =
       `SELECT ${selectClause} FROM ${fromClause} WHERE ${whereClause}`;
 
-    return this.db.prepare(query).all() as GaiaRecord[];
+    const results = this.db.prepare(query).all() as GaiaRecord[];
+    const duration = Date.now() - startTime;
+    this.logger.debug(
+      `Cone search completed in ${formatDuration(duration)}`,
+    );
+    return results;
   }
 
   /**

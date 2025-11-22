@@ -9,18 +9,27 @@ import type { CLIConfig } from "./config.ts";
 import { Logger, LogLevel } from "./types.ts";
 
 /**
- * Stream a gzipped CSV file in chunks
+ * Stream a gzipped CSV from a ReadableStream or file path
  */
 async function* streamGzippedCSV(
-  filePath: string,
+  source: string | ReadableStream<Uint8Array>,
   columnsToKeep: string[],
   chunkSize: number,
 ): AsyncGenerator<GaiaRecord[]> {
-  const file = await Deno.open(filePath, { read: true });
   const columnsToKeepSet = new Set(columnsToKeep);
+  let fileHandle: Deno.FsFile | null = null;
 
   try {
-    const csvStream = file.readable
+    // Get the readable stream from either file or direct stream
+    let readable: ReadableStream<Uint8Array>;
+    if (typeof source === "string") {
+      fileHandle = await Deno.open(source, { read: true });
+      readable = fileHandle.readable;
+    } else {
+      readable = source;
+    }
+
+    const csvStream = readable
       .pipeThrough(new DecompressionStream("gzip"))
       .pipeThrough(new TextDecoderStream())
       .pipeThrough(
@@ -63,13 +72,52 @@ async function* streamGzippedCSV(
       yield chunk;
     }
   } catch (error) {
-    try {
-      file.close();
-    } catch {
-      // Ignore if already closed
+    if (fileHandle) {
+      try {
+        fileHandle.close();
+      } catch {
+        // Ignore if already closed
+      }
     }
     throw error;
   }
+}
+
+/**
+ * Stream and filter CSV from a file path or download stream
+ */
+export async function streamAndFilterCSV(
+  source: string | ReadableStream<Uint8Array>,
+  config: CLIConfig,
+): Promise<GaiaRecord[]> {
+  const allRecords: GaiaRecord[] = [];
+
+  for await (
+    const chunk of streamGzippedCSV(
+      source,
+      config.storedColumns,
+      config.csvChunkSize,
+    )
+  ) {
+    const filteredRecords = filterByMagnitude(
+      chunk,
+      config.magnitudeLimit,
+      config.zeropoints[0],
+    );
+    allRecords.push(...filteredRecords);
+  }
+
+  return allRecords;
+}
+
+/**
+ * @deprecated Use streamAndFilterCSV instead
+ */
+export async function streamAndFilterFromURL(
+  stream: ReadableStream<Uint8Array>,
+  config: CLIConfig,
+): Promise<GaiaRecord[]> {
+  return streamAndFilterCSV(stream, config);
 }
 
 /**
@@ -175,6 +223,10 @@ export function formatBytes(bytes: number): string {
  * Format duration to human-readable string
  */
 export function formatDuration(ms: number): string {
+  if (ms < 1000) {
+    return `${ms}ms`;
+  }
+
   const seconds = Math.floor(ms / 1000);
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);

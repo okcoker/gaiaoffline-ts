@@ -1,13 +1,14 @@
-import { GaiaDatabase } from "./database.ts";
-import { type DownloadProgress, ParallelDownloader } from "./downloader.ts";
+import { GaiaDatabase, type GaiaRecord } from "./database.ts";
+import { ParallelDownloader } from "./downloader.ts";
 import {
   createLogger,
   formatBytes,
   formatDuration,
-  processCSVFile,
+  streamAndFilterCSV,
 } from "./utils.ts";
 import type { CLIConfig } from "./config.ts";
 import { Logger } from "./types.ts";
+import type { DownloadProgress } from "./downloader.ts";
 
 export interface PopulateStats {
   totalFiles: number;
@@ -138,63 +139,163 @@ export class PopulateCoordinator {
       const batchUrls = urls.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
       const startTime = Date.now();
-
       const emoji = batchSize === 1 ? "⬇️" : "📦";
-      this.logger.info(
-        `${emoji} Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files) to ${this.config.downloadDir}`,
-      );
-      this.interval = setInterval(() => {
-        this.printDownloadProgress();
-      }, 15000);
 
-      // Download batch
-      const downloadResults = await this.downloader.downloadBatch(batchUrls);
+      let processResults: Array<{
+        url: string;
+        records: GaiaRecord[] | null;
+        error: string | null;
+      }>;
 
-      const downloadDuration = Date.now() - startTime;
-      this.logger.debug(
-        `✅ Batch ${batchNum} (${batchSize} files) downloaded in ${
-          formatDuration(downloadDuration)
-        }`,
-      );
-
-      this.printDownloadProgress();
-      clearInterval(this.interval);
-
-      debugger;
-
-      if (downloadResults.length > 0) {
-        // Process successful downloads sequentially
+      if (this.config.useStreaming) {
         this.logger.info(
-          `💾 Inserting batch ${batchNum}/${totalBatches} into database`,
+          `${emoji} Streaming batch ${batchNum}/${totalBatches} (${batchUrls.length} files)`,
+        );
+
+        const streamResults = await this.downloader.streamBatch(batchUrls);
+
+        // Process all streams in parallel (decompress, parse, filter)
+        const processPromises = streamResults.map(async (streamResult) => {
+          if (!streamResult.success) {
+            this.stats.failedFiles++;
+            this.logger.error(
+              `❌ Failed to download ${streamResult.url}: ${streamResult.error}`,
+            );
+            return {
+              url: streamResult.url,
+              records: null,
+              error: streamResult.error,
+            };
+          }
+
+          try {
+            if (this.db.isFileProcessed(trackingTable, streamResult.url)) {
+              this.logger.debug(
+                `Skipping already processed: ${streamResult.url}`,
+              );
+              return { url: streamResult.url, records: [], error: null };
+            }
+
+            const records = await streamAndFilterCSV(
+              streamResult.stream,
+              this.config,
+            );
+
+            return { url: streamResult.url, records, error: null };
+          } catch (error) {
+            const errorMessage = error instanceof Error
+              ? error.message
+              : String(error);
+
+            return {
+              url: streamResult.url,
+              records: null,
+              error: errorMessage,
+            };
+          }
+        });
+
+        processResults = await Promise.all(processPromises);
+      } else {
+        // FILE MODE: Download to disk, then process from files
+        if (totalBatches > 0) {
+          this.logger.info(
+            `${emoji} Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files) to ${this.config.downloadDir}`,
+          );
+        }
+
+        this.interval = setInterval(() => {
+          this.printDownloadProgress();
+        }, 15000);
+
+        const downloadResults = await this.downloader.downloadBatch(batchUrls);
+
+        clearInterval(this.interval);
+
+        // Process files in parallel (read from disk)
+        const processPromises = downloadResults.map(async (result) => {
+          if (!result.success) {
+            this.stats.failedFiles++;
+            this.logger.error(
+              `❌ Failed to download ${result.url}: ${result.error}`,
+            );
+            return { url: result.url, records: null, error: result.error };
+          }
+
+          try {
+            if (this.db.isFileProcessed(trackingTable, result.url)) {
+              this.logger.debug(`Skipping already processed: ${result.url}`);
+              return { url: result.url, records: [], error: null };
+            }
+
+            const records = await streamAndFilterCSV(
+              result.filePath,
+              this.config,
+            );
+
+            // Clean up file if configured
+            if (this.config.cleanUpDownloadedFiles) {
+              try {
+                await Deno.remove(result.filePath);
+              } catch {
+                // Ignore cleanup errors
+              }
+            }
+
+            return { url: result.url, records, error: null };
+          } catch (error) {
+            const errorMessage = error instanceof Error
+              ? error.message
+              : String(error);
+
+            // If gzip is corrupt, delete the file
+            if (errorMessage.includes("corrupt gzip stream")) {
+              try {
+                await Deno.remove(result.filePath);
+              } catch {
+                // Ignore if already deleted
+              }
+            }
+
+            return { url: result.url, records: null, error: errorMessage };
+          }
+        });
+
+        processResults = await Promise.all(processPromises);
+      }
+
+      if (processResults.length > 0) {
+        const totalDuration = Date.now() - startTime;
+        this.logger.debug(
+          `Processing took ${formatDuration(totalDuration)}`,
         );
       }
 
-      for (const result of downloadResults) {
-        if (result.success) {
-          this.logger.debug(`Processing ${result.filePath}…`);
-          const processResult = await processCSVFile(
-            result.filePath,
-            result.url,
-            this.db,
-            this.config,
-            trackingTable,
-          );
-
-          if (processResult.success) {
-            this.logger.debug(`Processed ${result.filePath}`);
-            this.stats.completedFiles++;
-            this.stats.totalRecords += processResult.recordCount;
-          } else {
-            this.stats.failedFiles++;
-            this.logger.error(
-              `❌ Failed to process ${result.url}: ${processResult.error}`,
-            );
-          }
-        } else {
+      // Accumulate all records for bulk insert
+      const allRecords: GaiaRecord[] = [];
+      for (const result of processResults) {
+        if (result.records) {
+          allRecords.push(...result.records);
+        } else if (result.error) {
           this.stats.failedFiles++;
+          this.db.markFileFailed(trackingTable, result.url);
           this.logger.error(
-            `❌ Failed to download ${result.url}: ${result.error}`,
+            `❌ Failed to process ${result.url}: ${result.error}`,
           );
+        }
+      }
+
+      // Single bulk insert for entire batch
+      if (allRecords.length > 0) {
+        const insertedCount = this.db.insertGaiaRecords(allRecords);
+        this.stats.totalRecords += insertedCount;
+
+        // Mark all successful files as completed
+        for (const result of processResults) {
+          if (result.records && result.records.length >= 0) {
+            this.db.markFileCompleted(trackingTable, result.url);
+            this.stats.completedFiles++;
+          }
         }
       }
 

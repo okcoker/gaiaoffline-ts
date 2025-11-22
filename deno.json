@@ -1,10 +1,10 @@
 {
   "tasks": {
-    "start": "deno run --allow-net --allow-read --allow-write --allow-env --allow-ffi src/cli.ts",
-    "populate": "deno run --allow-net --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate",
-    "populate:debug": "deno run --allow-net --allow-read --allow-write --allow-env --allow-ffi --inspect-brk src/cli.ts populate",
-    "query": "deno run --allow-net --allow-read --allow-write --allow-env --allow-ffi src/cli.ts query",
-    "build": "deno compile --allow-net --allow-read --allow-write --allow-env --allow-ffi src/cli.ts --output dist/gaiaoffline"
+    "start": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts",
+    "populate": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate",
+    "populate:debug": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi --inspect-brk src/cli.ts populate",
+    "query": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts query",
+    "build": "deno compile --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts --output dist/gaiaoffline"
   },
   "imports": {
     "@std/cli": "jsr:@std/cli@^1.0.0",
