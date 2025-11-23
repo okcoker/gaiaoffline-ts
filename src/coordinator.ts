@@ -550,6 +550,7 @@ export class PopulateCoordinator {
             result.filePath,
             result.url,
             this.db,
+            this.config,
             trackingTable,
           );
 
@@ -580,7 +581,9 @@ export class PopulateCoordinator {
         : 0;
 
       this.logger.info(
-        `Progress: ${progress.completed}/${progress.total} (${percentage.toFixed(1)}%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
+        `Progress: ${progress.completed}/${progress.total} (${
+          percentage.toFixed(1)
+        }%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
       );
     }
   }
@@ -650,7 +653,9 @@ export class PopulateCoordinator {
         : 0;
 
       this.logger.info(
-        `Progress: ${progress.completed}/${progress.total} (${percentage.toFixed(1)}%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
+        `Progress: ${progress.completed}/${progress.total} (${
+          percentage.toFixed(1)
+        }%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
       );
     }
   }

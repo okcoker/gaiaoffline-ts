@@ -1,8 +1,7 @@
 use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::BufReader;
-use std::os::raw::{c_char, c_void};
-use std::slice;
+use std::os::raw::{c_char};
 use csv::ReaderBuilder;
 use flate2::read::GzDecoder;
 use serde_json::{json, Value};
@@ -124,7 +123,7 @@ mod tests {
     #[test]
     fn test_parse_csv() {
         let result = parse_csv_internal(
-            "../test.csv.gz",
+            "../tests/test.csv.gz",
             &["source_id".to_string(), "ra".to_string(), "dec".to_string()],
             1000,
         );

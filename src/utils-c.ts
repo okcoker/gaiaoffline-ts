@@ -4,7 +4,7 @@
 
 import { parseGzippedCsvC } from "./ffi/c.ts";
 import type { CLIConfig } from "./config.ts";
-import type { GaiaRecord } from "./database.ts";
+import type { GaiaRecord, TmassXmatchRecord } from "./database.ts";
 import { filterByMagnitude } from "./utils.ts";
 
 /**
@@ -31,6 +31,31 @@ export async function streamAndFilterCSVC(
     );
 
     return filteredRecords;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`C CSV parsing failed: ${errorMessage}`);
+  }
+}
+
+/**
+ * Parse 2MASS crossmatch CSV using C parser
+ */
+export async function parseTmassXmatchC(
+  filePath: string,
+): Promise<TmassXmatchRecord[]> {
+  try {
+    const columns = ["source_id", "original_ext_source_id"];
+    const records = await parseGzippedCsvC(
+      filePath,
+      columns,
+      100000,
+    );
+
+    // Map to TmassXmatchRecord format
+    return records.map((r: any) => ({
+      gaiadr3_source_id: r.source_id,
+      tmass_source_id: r.original_ext_source_id,
+    }));
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     throw new Error(`C CSV parsing failed: ${errorMessage}`);

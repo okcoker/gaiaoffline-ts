@@ -274,12 +274,16 @@ export function formatDuration(ms: number): string {
 /**
  * Process a 2MASS crossmatch CSV file
  * Matches Gaia source_id with 2MASS source_id
+ *
+ * @param potentialRecords - Optional pre-parsed records (from FFI parsers)
  */
 export async function processTmassXmatchFile(
   filePath: string,
   url: string,
   db: GaiaDatabase,
+  config: CLIConfig,
   trackingTable: string,
+  potentialRecords?: TmassXmatchRecord[],
 ): Promise<{ success: boolean; recordCount: number; error?: string }> {
   let file: Deno.FsFile | null = null;
 
@@ -290,45 +294,47 @@ export async function processTmassXmatchFile(
       return { success: true, recordCount: 0 };
     }
 
-    // Parse CSV using streaming parser
-    file = await Deno.open(filePath, { read: true });
+    // If records not provided, parse with TypeScript
+    if (!potentialRecords) {
+      file = await Deno.open(filePath, { read: true });
 
-    const csvStream = file.readable
-      .pipeThrough(
-        new DecompressionStream("gzip") as unknown as ReadableWritablePair<
-          Uint8Array,
-          Uint8Array
-        >,
-      )
-      .pipeThrough(new TextDecoderStream())
-      .pipeThrough(
-        new CsvParseStream({
-          skipFirstRow: true,
-        }),
-      );
+      const csvStream = file.readable
+        .pipeThrough(
+          new DecompressionStream("gzip") as unknown as ReadableWritablePair<
+            Uint8Array,
+            Uint8Array
+          >,
+        )
+        .pipeThrough(new TextDecoderStream())
+        .pipeThrough(
+          new CsvParseStream({
+            skipFirstRow: true,
+          }),
+        );
 
-    // Collect all potential crossmatch records first
-    const potentialRecords: TmassXmatchRecord[] = [];
+      // Collect all potential crossmatch records first
+      potentialRecords = [];
 
-    for await (const row of csvStream) {
-      const sourceId = row.source_id;
-      const tmassSourceId = row.original_ext_source_id;
+      for await (const row of csvStream) {
+        const sourceId = row.source_id;
+        const tmassSourceId = row.original_ext_source_id;
 
-      if (sourceId && tmassSourceId) {
-        potentialRecords.push({
-          gaiadr3_source_id: sourceId,
-          tmass_source_id: tmassSourceId,
-        });
+        if (sourceId && tmassSourceId) {
+          potentialRecords.push({
+            gaiadr3_source_id: sourceId,
+            tmass_source_id: tmassSourceId,
+          });
+        }
       }
-    }
 
-    // File stream is done, close it
-    try {
-      file.close();
-    } catch {
-      // Already closed by stream
+      // File stream is done, close it
+      try {
+        file.close();
+      } catch {
+        // Already closed by stream
+      }
+      file = null;
     }
-    file = null;
 
     // Filter records using a single SQL query with IN clause (much faster)
     // Process in batches to avoid SQL length limits
@@ -340,7 +346,9 @@ export async function processTmassXmatchFile(
       const sourceIds = batch.map((r) => `'${r.gaiadr3_source_id}'`).join(",");
 
       const existingIds = db
-        .prepare(`SELECT source_id FROM gaiadr3 WHERE source_id IN (${sourceIds})`)
+        .prepare(
+          `SELECT source_id FROM gaiadr3 WHERE source_id IN (${sourceIds})`,
+        )
         .all() as { source_id: string }[];
 
       const existingIdSet = new Set(existingIds.map((r) => r.source_id));
@@ -381,7 +389,9 @@ export async function processTmassXmatchFile(
 
     // Clean up downloaded file
     try {
-      await Deno.remove(filePath);
+      if (config.cleanUpDownloadedFiles) {
+        await Deno.remove(filePath);
+      }
     } catch {
       // Ignore cleanup errors
     }
@@ -469,7 +479,9 @@ export async function processTmassFile(
 
     for (let i = 0; i < potentialRecords.length; i += batchSize) {
       const batch = potentialRecords.slice(i, i + batchSize);
-      const tmassSourceIds = batch.map((r) => `'${r.tmass_source_id}'`).join(",");
+      const tmassSourceIds = batch.map((r) => `'${r.tmass_source_id}'`).join(
+        ",",
+      );
 
       const xmatchResults = db
         .prepare(

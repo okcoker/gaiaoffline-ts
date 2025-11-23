@@ -1,8 +1,12 @@
-# Gaia Offline - Deno
+# Gaia Offline - TS
 
 A Deno port of the [`gaiaoffline`](https://github.com/christinahedges/gaiaoffline) Python library for downloading and querying Gaia DR3 star catalog data locally.
 
-## Key Improvements Over Python Version
+## Why
+
+I created this port for usage of the library within a TS project, without having to rely on setting up a Python venv. I also wanted to experiment a bit with Deno's FFI interop.
+
+## Features
 
 1. **⚡ Parallel Downloads**: Downloads simultaneously (configurable via `--parallel` option)
 1. **🔄 Streamed Downloads**: Automatically downloads and streams contents into local DB without writing (using `--stream`)
@@ -33,6 +37,9 @@ deno task populate --file-limit 5 --parallel 3
 
 # Stream downloads directly into local DB
 deno task populate --stream
+
+# Populate DB with Gaia DR3 data, using C FFI for faster CSV processing, and debug output (Rust FFI available via `--rust-ffi`)
+deno task populate:gaia --c-ffi --log-level debug
 ```
 
 ### 2. Query Database
@@ -49,15 +56,26 @@ deno run --allow-read mod.ts stats --db-path ./gaiaoffline.db
 
 ### Commands
 
-- `populate` - Download and populate the database
+- `populate` - Download and populate the database with Gaia DR3 data, 2MASS crossmatch, and 2MASS magnitudes (in order)
+  - `populate:gaia` - Download and populate the database with Gaia DR3 data only
+  - `populate:tmass-xmatch` - Download and populate the database 2MASS crossmatch only
+  - `populate:tmass` - Download and populate the database 2MASS magnitudes only
 - `query` - Run interactive example queries
 - `stats` - Show database statistics
+
+
+## Performance
+
+On my M3 Max Macbook Pro these are the running times for population
+
+- `populate:gaia` — ~14hours (Could be faster using C/Rust FFI)
+- `populate:tmass-xmatch` — ~5.5hours
+- `populate:tmass` — ~5.5hours
 
 ## Usage as Library
 
 ```typescript
-import { createGaia } from "./mod.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
+import { createGaia, DEFAULT_CONFIG } from "./mod.ts";
 
 // Create Gaia instance, passing pre-populated local DB.
 const gaia = createGaia("./gaiaoffline.db", DEFAULT_CONFIG, {
@@ -80,43 +98,6 @@ for (const star of results.slice(0, 5)) {
 
 gaia.close();
 ```
-
-## Architecture
-
-### Parallel Download + Sequential Insert Pipeline
-
-```
-┌─────────────────────────────────────────────────┐
-│  Fetch CSV URLs from Gaia archive               │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│  Batch 1: Download 10 files in parallel         │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│  Parse CSVs, filter by magnitude                │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────────────────────────────────┐
-│  Insert into SQLite (sequential, transactional) │
-└───────────────────┬─────────────────────────────┘
-                    │
-                    ▼
-         While inserting Batch N,
-         download Batch N+1 in parallel
-```
-
-## Performance
-
-Expected performance improvements:
-
-- **Download time**: ~6-12x faster with 10-20 parallel downloads
-- **Total time**: ~4-6 hours (vs 12+ hours for Python version)
-- **Network**: Saturates available bandwidth instead of waiting for sequential downloads
 
 ## Configuration
 

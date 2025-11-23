@@ -33,7 +33,7 @@ export class Gaia {
     // Check if 2MASS table exists if crossmatch is requested
     if (this.options.tmassCrossmatch && !this.db.hasTmassTable()) {
       throw new Error(
-        "2MASS Crossmatch is not present in the database. Run populate_tmass first.",
+        "2MASS Crossmatch is not present in the database. Run populate:tmass first.",
       );
     }
   }
