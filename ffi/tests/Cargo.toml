@@ -1,0 +1,12 @@
+[package]
+name = "gaia-csv-test"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test"
+path = "test.rs"
+
+[dependencies]
+csv = "1.3"
+flate2 = "1.0"

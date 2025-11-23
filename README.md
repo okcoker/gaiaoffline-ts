@@ -1,42 +1,38 @@
 # Gaia Offline - Deno
 
-A high-performance Deno port of the [`gaiaoffline`](https://github.com/christinahedges/gaiaoffline) Python library for downloading and querying Gaia DR3 star catalog data locally.
+A Deno port of the [`gaiaoffline`](https://github.com/christinahedges/gaiaoffline) Python library for downloading and querying Gaia DR3 star catalog data locally.
 
 ## Key Improvements Over Python Version
 
-1. **⚡ Parallel Downloads**: Downloads 10-50 CSV files simultaneously (configurable)
-2. **🔄 Resumable Downloads**: Automatically resumes interrupted downloads
-3. **⚙️ CLI Configuration**: Pass config via command-line args instead of hardcoded paths
-4. **🚀 Better Performance**: TypeScript/Deno performance benefits
-5. **📊 Real-time Progress**: Live progress bars and statistics
+1. **⚡ Parallel Downloads**: Downloads simultaneously (configurable via `--parallel` option)
+1. **🔄 Streamed Downloads**: Automatically downloads and streams contents into local DB without writing (using `--stream`)
+1. **🔄 Resumable Downloads**: Automatically resumes interrupted downloads on subsequent runs (if not using `--stream`)
+1. **⚙️ CLI Configuration**: Pass config via command-line args
+1. **🚀 FFI**: For even faster CSV processing
 
 ## Installation
 
 Requires [Deno](https://deno.land/) 1.40+
 
-```bash
-# Clone or download this directory
-cd gaiaoffline-ts
-
-# Make executable (optional)
-chmod +x mod.ts
-```
-
 ## Quick Start
 
 ### 1. Populate Database
 
-Download and populate the Gaia DR3 catalog:
+Download and populate local sqlite DB with the Gaia DR3 catalog:
 
 ```bash
 # Default settings (10 parallel downloads)
+# Will download all 3300+ ~200MB file to populate the local DB
 deno task populate
 
 # Custom database location with 20 parallel downloads
-deno task populate --db-path /data/gaia.db --parallel 20
+deno task populate --db-path ./data/gaia.db --parallel 20
 
-# Test with limited files
+# Test 3 concurrent downloads, limiting to only 5 files
 deno task populate --file-limit 5 --parallel 3
+
+# Stream downloads directly into local DB
+deno task populate --stream
 ```
 
 ### 2. Query Database
@@ -57,25 +53,13 @@ deno run --allow-read mod.ts stats --db-path ./gaiaoffline.db
 - `query` - Run interactive example queries
 - `stats` - Show database statistics
 
-### Options
-
-```
--d, --db-path       Path to SQLite database (default: ./gaiaoffline.db)
--p, --parallel      Number of parallel downloads (default: 10, max: 50)
--m, --mag-limit     Magnitude limit for filtering (default: 16)
--l, --log-level     Log level: DEBUG, INFO, WARN, ERROR (default: INFO)
---no-resume         Disable resume capability for downloads
---columns           Comma-separated list of columns to store
---file-limit        Limit number of files to download (for testing)
-```
-
 ## Usage as Library
 
 ```typescript
 import { createGaia } from "./mod.ts";
 import { DEFAULT_CONFIG } from "./config.ts";
 
-// Create Gaia instance
+// Create Gaia instance, passing pre-populated local DB.
 const gaia = createGaia("./gaiaoffline.db", DEFAULT_CONFIG, {
   photometryOutput: "magnitude",
   magnitudeLimit: [-3, 20],

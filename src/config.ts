@@ -56,6 +56,12 @@ export interface CLIConfig {
    * @default false
    */
   useStreaming: boolean;
+  /**
+   * Whether to use Rust FFI for CSV parsing (requires rust-csv library)
+   * Provides 2-4x speedup over native TypeScript parsing
+   * @default false
+   */
+  useRustParser: boolean;
 }
 
 export const DEFAULT_CONFIG: CLIConfig = {
@@ -83,6 +89,7 @@ export const DEFAULT_CONFIG: CLIConfig = {
   magnitudeLimit: 16,
   logLevel: "INFO",
   useStreaming: false,
+  useRustParser: false,
 };
 
 export function parseConfig(args: string[]): CLIConfig {
@@ -99,6 +106,7 @@ export function parseConfig(args: string[]): CLIConfig {
     boolean: [
       "clean",
       "stream",
+      "rust",
     ],
     negatable: [
       "clean",
@@ -112,6 +120,7 @@ export function parseConfig(args: string[]): CLIConfig {
       "log-level": DEFAULT_CONFIG.logLevel,
       "csv-chunks": DEFAULT_CONFIG.csvChunkSize,
       "stream": DEFAULT_CONFIG.useStreaming,
+      "rust": DEFAULT_CONFIG.useRustParser,
     },
     alias: {
       p: "parallel",
@@ -187,6 +196,7 @@ export function parseConfig(args: string[]): CLIConfig {
     storedColumns: valid,
     zeropoints: DEFAULT_CONFIG.zeropoints,
     useStreaming,
+    useRustParser: parsed["rust"],
   };
 
   return config;
@@ -209,6 +219,7 @@ Options:
   --no-clean        Don't clean up downloaded files after processing
   -m, --mag-limit   Magnitude limit for filtering (default: 16)
   -p, --parallel    Number of parallel downloads (default: 10, max: 50)
+  --rust            Use Rust FFI for CSV parsing (2-4x faster, requires rust-csv library)
   --stream          Process files while downloading (faster but uses more RAM)
 Examples:
   # Populate with default settings

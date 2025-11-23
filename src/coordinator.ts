@@ -6,6 +6,7 @@ import {
   formatDuration,
   streamAndFilterCSV,
 } from "./utils.ts";
+import { streamAndFilterCSVRust } from "./utils-rust.ts";
 import type { CLIConfig } from "./config.ts";
 import { Logger } from "./types.ts";
 import type { DownloadProgress } from "./downloader.ts";
@@ -227,11 +228,11 @@ export class PopulateCoordinator {
               this.logger.debug(`Skipping already processed: ${result.url}`);
               return { url: result.url, records: [], error: null };
             }
-
-            const records = await streamAndFilterCSV(
-              result.filePath,
-              this.config,
-            );
+            this.logger.debug("Reading file:", result.filePath);
+            // Use Rust parser if enabled, otherwise TypeScript
+            const records = this.config.useRustParser
+              ? await streamAndFilterCSVRust(result.filePath, this.config)
+              : await streamAndFilterCSV(result.filePath, this.config);
 
             // Clean up file if configured
             if (this.config.cleanUpDownloadedFiles) {

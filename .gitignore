@@ -14,3 +14,11 @@ deno.lock
 # OS
 .DS_Store
 Thumbs.db
+
+ffi/tests/test.csv.gz
+ffi/tests/test-c
+ffi/tests/target
+ffi/rust/target
+*.dylib
+*.dll
+*.so

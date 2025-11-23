@@ -17,6 +17,7 @@ async function* streamGzippedCSV(
   chunkSize: number,
 ): AsyncGenerator<GaiaRecord[]> {
   const columnsToKeepSet = new Set(columnsToKeep);
+  const stringColumns = new Set(["source_id", "solution_id", "designation"]);
   let fileHandle: Deno.FsFile | null = null;
 
   try {
@@ -40,22 +41,46 @@ async function* streamGzippedCSV(
 
     let chunk: GaiaRecord[] = [];
     let headers: string[] = [];
+    let columnIndices: number[] = [];
     let isFirstRow = true;
 
     for await (const record of csvStream) {
       if (isFirstRow) {
         headers = Object.values(record);
+        // Pre-compute which column indices to keep
+        columnIndices = headers
+          .map((col, i) => columnsToKeepSet.has(col) ? i : -1)
+          .filter(i => i !== -1);
         isFirstRow = false;
         continue;
       }
 
       const recordObj: Record<string, unknown> = {};
       const values = Object.values(record);
-      for (let i = 0; i < headers.length; i++) {
+
+      // Only process columns we need (pre-filtered by index)
+      for (const i of columnIndices) {
         const col = headers[i];
-        if (columnsToKeepSet.has(col)) {
-          const value = values[i];
-          recordObj[col] = parseGaiaRecord(col, value);
+        const value = values[i];
+
+        // Fast path: keep strings as-is
+        if (stringColumns.has(col) || value === "") {
+          recordObj[col] = value;
+        } else if (typeof value === "string") {
+          // Inline number conversion without function call overhead
+          const lower = value.toLowerCase();
+          if (lower === "null") {
+            recordObj[col] = null;
+          } else if (lower === "false") {
+            recordObj[col] = false;
+          } else if (lower === "true") {
+            recordObj[col] = true;
+          } else {
+            const num = Number(value);
+            recordObj[col] = isNaN(num) ? value : num;
+          }
+        } else {
+          recordObj[col] = value;
         }
       }
 
@@ -455,31 +480,3 @@ export const createLogger = (level: LogLevel, tag: string): Logger => {
   };
 };
 
-function parseGaiaRecord(column: string, value: unknown): unknown {
-  if (
-    column === "source_id" ||
-    column === "solution_id" ||
-    column === "designation" ||
-    value === ""
-  ) {
-    return value;
-  }
-
-  if (typeof value === "string") {
-    if (value.toLowerCase() === "null") {
-      return null;
-    }
-    if (value.toLowerCase() === "false") {
-      return false;
-    }
-    if (value.toLowerCase() === "true") {
-      return true;
-    }
-  }
-
-  if (column === "source_id" || value === "" || value === null) {
-    return value;
-  }
-  const num = Number(value);
-  return isNaN(num) ? value : num;
-}
