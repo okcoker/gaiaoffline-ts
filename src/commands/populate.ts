@@ -2,6 +2,8 @@ import type { CLIConfig } from "../config.ts";
 import { PopulateCoordinator } from "../coordinator.ts";
 import { GaiaDatabase } from "../database.ts";
 
+type PopulateType = "all" | "gaia" | "tmass-xmatch" | "tmass";
+
 /**
  * Populate the database with the Gaia DR3 data
  * @param config - The configuration for the database
@@ -10,6 +12,7 @@ import { GaiaDatabase } from "../database.ts";
  */
 export async function populateCommand(
   config: CLIConfig,
+  type: PopulateType,
   args: string[],
 ): Promise<void> {
   console.log("🚀 Gaia Offline - Database Population\n");
@@ -41,7 +44,17 @@ export async function populateCommand(
   };
 
   try {
-    await coordinator.populateGaiaDR3(fileLimit);
+    if (type === "all") {
+      await coordinator.populateGaiaDR3(fileLimit);
+      await coordinator.populateTmassXmatch(fileLimit);
+      await coordinator.populateTmass(fileLimit);
+    } else if (type === "gaia") {
+      await coordinator.populateGaiaDR3(fileLimit);
+    } else if (type === "tmass-xmatch") {
+      await coordinator.populateTmassXmatch(fileLimit);
+    } else if (type === "tmass") {
+      await coordinator.populateTmass(fileLimit);
+    }
     await cleanup();
   } catch (error) {
     await cleanup();

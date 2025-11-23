@@ -19,7 +19,19 @@ async function main(): Promise<void> {
   try {
     switch (command) {
       case "populate":
-        await populateCommand(config, args.slice(1));
+        await populateCommand(config, "all", args.slice(1));
+        break;
+
+      case "populate:gaia":
+        await populateCommand(config, "gaia", args.slice(1));
+        break;
+
+      case "populate:tmass-xmatch":
+        await populateCommand(config, "tmass-xmatch", args.slice(1));
+        break;
+
+      case "populate:tmass":
+        await populateCommand(config, "tmass", args.slice(1));
         break;
 
       case "query":

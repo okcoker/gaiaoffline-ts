@@ -7,6 +7,7 @@ import {
 } from "./database.ts";
 import type { CLIConfig } from "./config.ts";
 import { Logger, LogLevel } from "./types.ts";
+import { parse as parsePSV } from "@std/csv";
 
 /**
  * Stream a gzipped CSV from a ReadableStream or file path
@@ -280,6 +281,8 @@ export async function processTmassXmatchFile(
   db: GaiaDatabase,
   trackingTable: string,
 ): Promise<{ success: boolean; recordCount: number; error?: string }> {
+  let file: Deno.FsFile | null = null;
+
   try {
     // Check if already processed
     if (db.isFileProcessed(trackingTable, url)) {
@@ -288,7 +291,7 @@ export async function processTmassXmatchFile(
     }
 
     // Parse CSV using streaming parser
-    const file = await Deno.open(filePath, { read: true });
+    file = await Deno.open(filePath, { read: true });
 
     const csvStream = file.readable
       .pipeThrough(
@@ -304,27 +307,51 @@ export async function processTmassXmatchFile(
         }),
       );
 
-    // Filter: only keep records that exist in gaiadr3 table
-    const xmatchRecords: TmassXmatchRecord[] = [];
+    // Collect all potential crossmatch records first
+    const potentialRecords: TmassXmatchRecord[] = [];
 
     for await (const row of csvStream) {
       const sourceId = row.source_id;
       const tmassSourceId = row.original_ext_source_id;
 
       if (sourceId && tmassSourceId) {
-        // Check if this Gaia source exists in our database
-        const exists = db
-          .getRecordCount(`gaiadr3 WHERE source_id = '${sourceId}'`);
-        if (exists > 0) {
-          xmatchRecords.push({
-            gaiadr3_source_id: sourceId,
-            tmass_source_id: tmassSourceId,
-          });
-        }
+        potentialRecords.push({
+          gaiadr3_source_id: sourceId,
+          tmass_source_id: tmassSourceId,
+        });
       }
     }
 
-    file.close();
+    // File stream is done, close it
+    try {
+      file.close();
+    } catch {
+      // Already closed by stream
+    }
+    file = null;
+
+    // Filter records using a single SQL query with IN clause (much faster)
+    // Process in batches to avoid SQL length limits
+    const batchSize = 1000;
+    const xmatchRecords: TmassXmatchRecord[] = [];
+
+    for (let i = 0; i < potentialRecords.length; i += batchSize) {
+      const batch = potentialRecords.slice(i, i + batchSize);
+      const sourceIds = batch.map((r) => `'${r.gaiadr3_source_id}'`).join(",");
+
+      const existingIds = db
+        .prepare(`SELECT source_id FROM gaiadr3 WHERE source_id IN (${sourceIds})`)
+        .all() as { source_id: string }[];
+
+      const existingIdSet = new Set(existingIds.map((r) => r.source_id));
+
+      // Only keep records where Gaia source exists
+      for (const record of batch) {
+        if (existingIdSet.has(record.gaiadr3_source_id)) {
+          xmatchRecords.push(record);
+        }
+      }
+    }
 
     // Insert crossmatch records
     const insertedCount = db.insertTmassXmatchRecords(xmatchRecords);
@@ -343,6 +370,15 @@ export async function processTmassXmatchFile(
       error: errorMessage,
     };
   } finally {
+    // Close file if still open
+    if (file) {
+      try {
+        file.close();
+      } catch {
+        // Already closed
+      }
+    }
+
     // Clean up downloaded file
     try {
       await Deno.remove(filePath);
@@ -362,6 +398,8 @@ export async function processTmassFile(
   db: GaiaDatabase,
   trackingTable: string,
 ): Promise<{ success: boolean; recordCount: number; error?: string }> {
+  let file: Deno.FsFile | null = null;
+
   try {
     // Check if already processed
     if (db.isFileProcessed(trackingTable, url)) {
@@ -370,7 +408,7 @@ export async function processTmassFile(
     }
 
     // Stream pipe-delimited 2MASS file line-by-line
-    const file = await Deno.open(filePath, { read: true });
+    file = await Deno.open(filePath, { read: true });
 
     const csvStream = file.readable
       .pipeThrough(
@@ -387,9 +425,14 @@ export async function processTmassFile(
         }),
       );
 
-    // Parse pipe-delimited format
+    // Parse pipe-delimited format and collect potential records
     // Columns we need: 5=tmass_source_id, 6=j_m, 10=h_m, 14=k_m
-    const tmassRecords: TmassRecord[] = [];
+    const potentialRecords: Array<{
+      tmass_source_id: string;
+      j_m: number | null;
+      h_m: number | null;
+      k_m: number | null;
+    }> = [];
 
     for await (const cols of csvStream) {
       // cols is an array of column values
@@ -400,29 +443,58 @@ export async function processTmassFile(
       const tmassSourceId = colArray[5]?.trim();
       if (!tmassSourceId) continue;
 
-      // Get the Gaia source ID from xmatch table
-      const xmatchResult = db
-        .prepare(
-          `SELECT gaiadr3_source_id FROM tmass_xmatch WHERE tmass_source_id = ?`,
-        )
-        .get(tmassSourceId) as { gaiadr3_source_id: string } | undefined;
+      const jMag = colArray[6]?.trim();
+      const hMag = colArray[10]?.trim();
+      const kMag = colArray[14]?.trim();
 
-      if (xmatchResult) {
-        const jMag = colArray[6]?.trim();
-        const hMag = colArray[10]?.trim();
-        const kMag = colArray[14]?.trim();
-
-        tmassRecords.push({
-          gaiadr3_source_id: xmatchResult.gaiadr3_source_id,
-          tmass_source_id: tmassSourceId,
-          j_m: jMag && jMag !== "null" ? parseFloat(jMag) : null,
-          h_m: hMag && hMag !== "null" ? parseFloat(hMag) : null,
-          k_m: kMag && kMag !== "null" ? parseFloat(kMag) : null,
-        });
-      }
+      potentialRecords.push({
+        tmass_source_id: tmassSourceId,
+        j_m: jMag && jMag !== "null" ? parseFloat(jMag) : null,
+        h_m: hMag && hMag !== "null" ? parseFloat(hMag) : null,
+        k_m: kMag && kMag !== "null" ? parseFloat(kMag) : null,
+      });
     }
 
-    file.close();
+    // File stream is done, close it
+    try {
+      file.close();
+    } catch {
+      // Already closed by stream
+    }
+    file = null;
+
+    // Match with xmatch table using batched queries
+    const batchSize = 1000;
+    const tmassRecords: TmassRecord[] = [];
+
+    for (let i = 0; i < potentialRecords.length; i += batchSize) {
+      const batch = potentialRecords.slice(i, i + batchSize);
+      const tmassSourceIds = batch.map((r) => `'${r.tmass_source_id}'`).join(",");
+
+      const xmatchResults = db
+        .prepare(
+          `SELECT gaiadr3_source_id, tmass_source_id FROM tmass_xmatch WHERE tmass_source_id IN (${tmassSourceIds})`,
+        )
+        .all() as { gaiadr3_source_id: string; tmass_source_id: string }[];
+
+      const xmatchMap = new Map(
+        xmatchResults.map((r) => [r.tmass_source_id, r.gaiadr3_source_id]),
+      );
+
+      // Only keep records that have a crossmatch
+      for (const record of batch) {
+        const gaiaSourceId = xmatchMap.get(record.tmass_source_id);
+        if (gaiaSourceId) {
+          tmassRecords.push({
+            gaiadr3_source_id: gaiaSourceId,
+            tmass_source_id: record.tmass_source_id,
+            j_m: record.j_m,
+            h_m: record.h_m,
+            k_m: record.k_m,
+          });
+        }
+      }
+    }
 
     // Insert 2MASS records
     const insertedCount = db.insertTmassRecords(tmassRecords);
@@ -441,6 +513,15 @@ export async function processTmassFile(
       error: errorMessage,
     };
   } finally {
+    // Close file if still open
+    if (file) {
+      try {
+        file.close();
+      } catch {
+        // Already closed
+      }
+    }
+
     // Clean up downloaded file
     try {
       await Deno.remove(filePath);

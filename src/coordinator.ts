@@ -4,6 +4,8 @@ import {
   createLogger,
   formatBytes,
   formatDuration,
+  processTmassFile,
+  processTmassXmatchFile,
   streamAndFilterCSV,
 } from "./utils.ts";
 import type { CLIConfig } from "./config.ts";
@@ -379,6 +381,278 @@ export class PopulateCoordinator {
     );
     this.logger.info(`Database path:    ${this.config.databasePath}`);
     this.logger.info("=".repeat(60) + "\n");
+  }
+
+  /**
+   * Populate 2MASS crossmatch data
+   * This links Gaia DR3 sources with their 2MASS counterparts
+   */
+  async populateTmassXmatch(fileLimit?: number): Promise<PopulateStats> {
+    this.logger.info("🔗 Starting 2MASS crossmatch population…");
+
+    const startTime = Date.now();
+
+    await this.downloader.initialize();
+    this.db.initialize();
+
+    // Check if gaiadr3 table exists
+    if (this.db.getRecordCount("gaiadr3") === 0) {
+      throw new Error(
+        "Gaia DR3 table is empty. Run populateGaiaDR3 first.",
+      );
+    }
+
+    this.logger.info("📋 Fetching list of 2MASS crossmatch files…");
+    const allUrls = await getCSVUrls(
+      "https://cdn.gea.esac.esa.int/Gaia/gedr3/cross_match/tmasspscxsc_best_neighbour/",
+    );
+
+    const totalFiles = fileLimit ?? allUrls.length;
+    this.stats = {
+      totalFiles,
+      completedFiles: 0,
+      failedFiles: 0,
+      totalRecords: 0,
+      duration: 0,
+    };
+
+    this.logger.debug(`Found ${totalFiles} files to process…`);
+
+    this.db.initializeTracking("file_tracking_tmass_xmatch", allUrls);
+
+    // Filter out already processed files
+    let pendingUrls = allUrls.filter(
+      (url) => !this.db.isFileProcessed("file_tracking_tmass_xmatch", url),
+    );
+
+    if (fileLimit) {
+      pendingUrls = pendingUrls.slice(0, fileLimit);
+    }
+
+    this.logger.debug(
+      `${
+        allUrls.length - pendingUrls.length
+      } files already processed, ${pendingUrls.length} remaining\n`,
+    );
+
+    // Process files
+    await this.processTmassCrossmatchBatch(
+      pendingUrls,
+      "file_tracking_tmass_xmatch",
+    );
+
+    this.db.createIndices();
+
+    this.stats.duration = Date.now() - startTime;
+    this.printSummary();
+
+    return this.stats;
+  }
+
+  /**
+   * Populate 2MASS photometry data
+   * This adds J, H, K magnitudes for crossmatched sources
+   */
+  async populateTmass(fileLimit?: number): Promise<PopulateStats> {
+    this.logger.info("📸 Starting 2MASS photometry population…");
+
+    const startTime = Date.now();
+
+    await this.downloader.initialize();
+    this.db.initialize();
+
+    // Check if tmass_xmatch table exists and has data
+    if (this.db.getRecordCount("tmass_xmatch") === 0) {
+      throw new Error(
+        "2MASS crossmatch table is empty. Run populateTmassXmatch first.",
+      );
+    }
+
+    this.logger.info("📋 Fetching list of 2MASS catalog files…");
+    const allUrls = await getCSVUrls(
+      "https://irsa.ipac.caltech.edu/2MASS/download/allsky/",
+    );
+
+    // Exclude last 3 files (as per Python implementation)
+    const filteredUrls = allUrls.slice(0, -3);
+
+    const totalFiles = fileLimit ?? filteredUrls.length;
+    this.stats = {
+      totalFiles,
+      completedFiles: 0,
+      failedFiles: 0,
+      totalRecords: 0,
+      duration: 0,
+    };
+
+    this.logger.debug(`Found ${totalFiles} files to process…`);
+
+    this.db.initializeTracking("file_tracking_tmass", filteredUrls);
+
+    // Filter out already processed files
+    let pendingUrls = filteredUrls.filter(
+      (url) => !this.db.isFileProcessed("file_tracking_tmass", url),
+    );
+
+    if (fileLimit) {
+      pendingUrls = pendingUrls.slice(0, fileLimit);
+    }
+
+    this.logger.debug(
+      `${
+        filteredUrls.length - pendingUrls.length
+      } files already processed, ${pendingUrls.length} remaining\n`,
+    );
+
+    // Process files
+    await this.processTmassBatch(pendingUrls, "file_tracking_tmass");
+
+    this.db.createIndices();
+
+    this.stats.duration = Date.now() - startTime;
+    this.printSummary();
+
+    return this.stats;
+  }
+
+  /**
+   * Process 2MASS crossmatch files in batches
+   */
+  private async processTmassCrossmatchBatch(
+    urls: string[],
+    trackingTable: string,
+  ): Promise<void> {
+    const batchSize = this.config.maxParallelDownloads;
+    const totalBatches = Math.ceil(urls.length / batchSize);
+
+    for (let i = 0; i < urls.length; i += batchSize) {
+      const batchUrls = urls.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+
+      this.logger.info(
+        `📦 Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files)`,
+      );
+
+      const downloadResults = await this.downloader.downloadBatch(batchUrls);
+
+      // Process files sequentially (database constraints)
+      for (const result of downloadResults) {
+        if (!result.success) {
+          this.stats.failedFiles++;
+          this.logger.error(
+            `❌ Failed to download ${result.url}: ${result.error}`,
+          );
+          continue;
+        }
+
+        try {
+          const processResult = await processTmassXmatchFile(
+            result.filePath,
+            result.url,
+            this.db,
+            trackingTable,
+          );
+
+          if (processResult.success) {
+            this.stats.completedFiles++;
+            this.stats.totalRecords += processResult.recordCount;
+            this.logger.info(
+              `✅ Processed ${result.url}: ${processResult.recordCount} records`,
+            );
+          } else {
+            this.stats.failedFiles++;
+            this.logger.error(
+              `❌ Failed to process ${result.url}: ${processResult.error}`,
+            );
+          }
+        } catch (error) {
+          this.stats.failedFiles++;
+          this.logger.error(
+            `❌ Error processing ${result.url}: ${error}`,
+          );
+        }
+      }
+
+      // Show progress
+      const progress = this.db.getTrackingProgress(trackingTable);
+      const percentage = progress.total > 0
+        ? (progress.completed / progress.total) * 100
+        : 0;
+
+      this.logger.info(
+        `Progress: ${progress.completed}/${progress.total} (${percentage.toFixed(1)}%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
+      );
+    }
+  }
+
+  /**
+   * Process 2MASS photometry files in batches
+   */
+  private async processTmassBatch(
+    urls: string[],
+    trackingTable: string,
+  ): Promise<void> {
+    const batchSize = this.config.maxParallelDownloads;
+    const totalBatches = Math.ceil(urls.length / batchSize);
+
+    for (let i = 0; i < urls.length; i += batchSize) {
+      const batchUrls = urls.slice(i, i + batchSize);
+      const batchNum = Math.floor(i / batchSize) + 1;
+
+      this.logger.info(
+        `📦 Downloading batch ${batchNum}/${totalBatches} (${batchUrls.length} files)`,
+      );
+
+      const downloadResults = await this.downloader.downloadBatch(batchUrls);
+
+      // Process files sequentially (database constraints)
+      for (const result of downloadResults) {
+        if (!result.success) {
+          this.stats.failedFiles++;
+          this.logger.error(
+            `❌ Failed to download ${result.url}: ${result.error}`,
+          );
+          continue;
+        }
+
+        try {
+          const processResult = await processTmassFile(
+            result.filePath,
+            result.url,
+            this.db,
+            trackingTable,
+          );
+
+          if (processResult.success) {
+            this.stats.completedFiles++;
+            this.stats.totalRecords += processResult.recordCount;
+            this.logger.info(
+              `✅ Processed ${result.url}: ${processResult.recordCount} records`,
+            );
+          } else {
+            this.stats.failedFiles++;
+            this.logger.error(
+              `❌ Failed to process ${result.url}: ${processResult.error}`,
+            );
+          }
+        } catch (error) {
+          this.stats.failedFiles++;
+          this.logger.error(
+            `❌ Error processing ${result.url}: ${error}`,
+          );
+        }
+      }
+
+      // Show progress
+      const progress = this.db.getTrackingProgress(trackingTable);
+      const percentage = progress.total > 0
+        ? (progress.completed / progress.total) * 100
+        : 0;
+
+      this.logger.info(
+        `Progress: ${progress.completed}/${progress.total} (${percentage.toFixed(1)}%) | Records: ${this.stats.totalRecords.toLocaleString()}\n`,
+      );
+    }
   }
 
   /**

@@ -218,30 +218,42 @@ export function printUsage() {
 Usage: gaiaoffline [command] [options]
 
 Commands:
-  populate          Download and populate the Gaia database
-  query             Run interactive queries (WIP)
+  populate                Download and populate the Gaia DR3 database
+  populate:gaia           Download and populate the Gaia DR3 database (same as populate)
+  populate:tmass-xmatch   Download and populate 2MASS crossmatch data (links Gaia to 2MASS)
+  populate:tmass          Download and populate 2MASS photometry data (J, H, K magnitudes)
+  query                   Run interactive queries (WIP)
+  stats                   Show database statistics
 
 Options:
   --clean           Clean up downloaded files after processing (default: true)
   --columns         Comma-separated list of columns to store (default: source_id,ra,dec,parallax,pmra,pmdec,radial_velocity,phot_g_mean_flux,phot_bp_mean_flux,phot_rp_mean_flux,teff_gspphot,logg_gspphot,mh_gspphot)
   --csv-chunks      The amount of rows to process at a time from the CSV file. (default: 100000)
   --db-path         Path to SQLite database (default: ./gaiaoffline.db)
+  --file-limit      Limit number of files to download (for testing)
   -l, --log-level   Log level: DEBUG, INFO, WARN, ERROR (default: INFO)
   --no-clean        Don't clean up downloaded files after processing
   -m, --mag-limit   Magnitude limit for filtering (default: 16)
   -p, --parallel    Number of parallel downloads (default: 10, max: 50)
-  --rust-ffi        Use Rust FFI for CSV parsing (2-4x faster, requires rust-csv library)
-  --c-ffi           Use C FFI for CSV parsing (4-5x faster, requires c-csv library, fastest option)
+  --rust            Use Rust FFI for CSV parsing (2-4x faster, requires --allow-ffi)
+  --c               Use C FFI for CSV parsing (4-5x faster, fastest option, requires --allow-ffi)
   --stream          Process files while downloading (faster but uses more RAM)
+
 Examples:
-  # Populate with default settings
+  # Populate Gaia DR3 with default settings
   gaiaoffline populate
 
   # Custom database location with 20 parallel downloads
   gaiaoffline populate --db-path /data/gaia.db --parallel 20
 
-  # Download only specific columns
-  gaiaoffline populate --columns source_id,ra,dec,phot_g_mean_flux
+  # Populate 2MASS crossmatch data (run after populating Gaia DR3)
+  gaiaoffline populate:tmass-xmatch
+
+  # Populate 2MASS photometry (run after populating crossmatch)
+  gaiaoffline populate:tmass
+
+  # Test with only 2 files using C FFI parser
+  gaiaoffline populate --file-limit 2 --c
   `);
 }
 
