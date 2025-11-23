@@ -1,23 +1,45 @@
 /**
  * Deno FFI bindings for C CSV parser
+ * Lazy-loaded to avoid requiring --allow-ffi unless actually used
  */
 
 const libPath = Deno.build.os === "darwin"
-  ? "./c-csv/libgaia_csv_parser.dylib"
+  ? "./ffi/c/libgaia_csv_parser.dylib"
   : Deno.build.os === "windows"
-  ? "./c-csv/gaia_csv_parser.dll"
-  : "./c-csv/libgaia_csv_parser.so";
+  ? "./ffi/c/gaia_csv_parser.dll"
+  : "./ffi/c/libgaia_csv_parser.so";
 
-const lib = Deno.dlopen(libPath, {
-  parse_gzipped_csv: {
-    parameters: ["pointer", "pointer", "usize"],
-    result: "pointer",
-  },
-  free_string: {
-    parameters: ["pointer"],
-    result: "void",
-  },
-});
+let lib:
+  | Deno.DynamicLibrary<{
+    parse_gzipped_csv: {
+      parameters: ["pointer", "pointer", "usize"];
+      result: "pointer";
+    };
+    free_string: {
+      parameters: ["pointer"];
+      result: "void";
+    };
+  }>
+  | null = null;
+
+/**
+ * Lazy-load the C library (only loads once)
+ */
+function getCLib() {
+  if (!lib) {
+    lib = Deno.dlopen(libPath, {
+      parse_gzipped_csv: {
+        parameters: ["pointer", "pointer", "usize"],
+        result: "pointer",
+      },
+      free_string: {
+        parameters: ["pointer"],
+        result: "void",
+      },
+    });
+  }
+  return lib;
+}
 
 const encoder = new TextEncoder();
 
@@ -38,11 +60,14 @@ export async function parseGzippedCsvC(
   const filePathPtr = Deno.UnsafePointer.of(filePathBytes);
   const columnsJsonPtr = Deno.UnsafePointer.of(columnsJsonBytes);
 
+  // Get the library (loads on first call)
+  const cLib = getCLib();
+
   // Call C function
-  const resultPtr = lib.symbols.parse_gzipped_csv(
+  const resultPtr = cLib.symbols.parse_gzipped_csv(
     filePathPtr,
     columnsJsonPtr,
-    BigInt(chunkSize),
+    chunkSize,
   );
 
   if (resultPtr === null) {
@@ -57,7 +82,7 @@ export async function parseGzippedCsvC(
   const records = JSON.parse(resultCString);
 
   // Free the memory allocated by C
-  lib.symbols.free_string(resultPtr);
+  cLib.symbols.free_string(resultPtr);
 
   return records;
 }
@@ -66,5 +91,8 @@ export async function parseGzippedCsvC(
  * Close the library (cleanup)
  */
 export function closeCLib() {
-  lib.close();
+  if (lib) {
+    lib.close();
+    lib = null;
+  }
 }

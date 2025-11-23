@@ -62,6 +62,13 @@ export interface CLIConfig {
    * @default false
    */
   useRustParser: boolean;
+
+  /**
+   * Whether to use C FFI for CSV parsing (requires c-csv library)
+   * Provides 4-5x speedup over native TypeScript parsing (fastest option)
+   * @default false
+   */
+  useCParser: boolean;
 }
 
 export const DEFAULT_CONFIG: CLIConfig = {
@@ -90,6 +97,7 @@ export const DEFAULT_CONFIG: CLIConfig = {
   logLevel: "INFO",
   useStreaming: false,
   useRustParser: false,
+  useCParser: false,
 };
 
 export function parseConfig(args: string[]): CLIConfig {
@@ -106,7 +114,8 @@ export function parseConfig(args: string[]): CLIConfig {
     boolean: [
       "clean",
       "stream",
-      "rust",
+      "rust-ffi",
+      "c-ffi",
     ],
     negatable: [
       "clean",
@@ -120,7 +129,8 @@ export function parseConfig(args: string[]): CLIConfig {
       "log-level": DEFAULT_CONFIG.logLevel,
       "csv-chunks": DEFAULT_CONFIG.csvChunkSize,
       "stream": DEFAULT_CONFIG.useStreaming,
-      "rust": DEFAULT_CONFIG.useRustParser,
+      "rust-ffi": DEFAULT_CONFIG.useRustParser,
+      "c-ffi": DEFAULT_CONFIG.useCParser,
     },
     alias: {
       p: "parallel",
@@ -196,7 +206,8 @@ export function parseConfig(args: string[]): CLIConfig {
     storedColumns: valid,
     zeropoints: DEFAULT_CONFIG.zeropoints,
     useStreaming,
-    useRustParser: parsed["rust"],
+    useRustParser: parsed["rust-ffi"],
+    useCParser: parsed["c-ffi"],
   };
 
   return config;
@@ -219,7 +230,8 @@ Options:
   --no-clean        Don't clean up downloaded files after processing
   -m, --mag-limit   Magnitude limit for filtering (default: 16)
   -p, --parallel    Number of parallel downloads (default: 10, max: 50)
-  --rust            Use Rust FFI for CSV parsing (2-4x faster, requires rust-csv library)
+  --rust-ffi        Use Rust FFI for CSV parsing (2-4x faster, requires rust-csv library)
+  --c-ffi           Use C FFI for CSV parsing (4-5x faster, requires c-csv library, fastest option)
   --stream          Process files while downloading (faster but uses more RAM)
 Examples:
   # Populate with default settings

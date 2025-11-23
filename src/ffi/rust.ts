@@ -1,30 +1,52 @@
 /**
  * Deno FFI bindings for Rust CSV parser
+ * Lazy-loaded to avoid requiring --allow-ffi unless actually used
  */
 
 const libPath = Deno.build.os === "darwin"
-  ? "./rust-csv/target/release/libgaia_csv_parser.dylib"
+  ? "./ffi/rust/target/release/libgaia_csv_parser.dylib"
   : Deno.build.os === "windows"
-  ? "./rust-csv/target/release/gaia_csv_parser.dll"
-  : "./rust-csv/target/release/libgaia_csv_parser.so";
+  ? "./ffi/rust/target/release/gaia_csv_parser.dll"
+  : "./ffi/rust/target/release/libgaia_csv_parser.so";
 
-const lib = Deno.dlopen(libPath, {
-  parse_gzipped_csv: {
-    parameters: ["pointer", "pointer", "usize"],
-    result: "pointer",
-  },
-  free_string: {
-    parameters: ["pointer"],
-    result: "void",
-  },
-});
+let lib:
+  | Deno.DynamicLibrary<{
+    parse_gzipped_csv: {
+      parameters: ["pointer", "pointer", "usize"];
+      result: "pointer";
+    };
+    free_string: {
+      parameters: ["pointer"];
+      result: "void";
+    };
+  }>
+  | null = null;
+
+/**
+ * Lazy-load the Rust library (only loads once)
+ */
+function getRustLib() {
+  if (!lib) {
+    lib = Deno.dlopen(libPath, {
+      parse_gzipped_csv: {
+        parameters: ["pointer", "pointer", "usize"],
+        result: "pointer",
+      },
+      free_string: {
+        parameters: ["pointer"],
+        result: "void",
+      },
+    });
+  }
+  return lib;
+}
 
 const encoder = new TextEncoder();
 
 /**
  * Parse a gzipped CSV file using Rust
  */
-export async function parseGzippedCsvRust(
+export function parseGzippedCsvRust(
   filePath: string,
   columnsToKeep: string[],
   chunkSize = 100000,
@@ -38,11 +60,14 @@ export async function parseGzippedCsvRust(
   const filePathPtr = Deno.UnsafePointer.of(filePathBytes);
   const columnsJsonPtr = Deno.UnsafePointer.of(columnsJsonBytes);
 
+  // Get the library (loads on first call)
+  const rustLib = getRustLib();
+
   // Call Rust function
-  const resultPtr = lib.symbols.parse_gzipped_csv(
+  const resultPtr = rustLib.symbols.parse_gzipped_csv(
     filePathPtr,
     columnsJsonPtr,
-    BigInt(chunkSize),
+    chunkSize,
   );
 
   if (resultPtr === null) {
@@ -57,7 +82,7 @@ export async function parseGzippedCsvRust(
   const records = JSON.parse(resultCString);
 
   // Free the memory allocated by Rust
-  lib.symbols.free_string(resultPtr);
+  rustLib.symbols.free_string(resultPtr);
 
   return records;
 }
@@ -66,5 +91,8 @@ export async function parseGzippedCsvRust(
  * Close the library (cleanup)
  */
 export function closeRustLib() {
-  lib.close();
+  if (lib) {
+    lib.close();
+    lib = null;
+  }
 }

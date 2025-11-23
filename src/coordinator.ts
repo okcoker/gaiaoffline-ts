@@ -6,7 +6,6 @@ import {
   formatDuration,
   streamAndFilterCSV,
 } from "./utils.ts";
-import { streamAndFilterCSVRust } from "./utils-rust.ts";
 import type { CLIConfig } from "./config.ts";
 import { Logger } from "./types.ts";
 import type { DownloadProgress } from "./downloader.ts";
@@ -63,21 +62,25 @@ export class PopulateCoordinator {
       "https://cdn.gea.esac.esa.int/Gaia/gdr3/gaia_source/",
     );
 
-    const urls = fileLimit ? allUrls.slice(0, fileLimit) : allUrls;
-    this.stats.totalFiles = urls.length;
+    const totalFiles = fileLimit ?? allUrls.length;
+    this.stats.totalFiles = totalFiles;
 
-    this.logger.debug(`Found ${urls.length} files to process…`);
+    this.logger.debug(`Found ${totalFiles} files to process…`);
 
-    this.db.initializeTracking("file_tracking_gaiadr3", urls);
+    this.db.initializeTracking("file_tracking_gaiadr3", allUrls);
 
     // Filter out already processed files
-    const pendingUrls = urls.filter(
+    let pendingUrls = allUrls.filter(
       (url) => !this.db.isFileProcessed("file_tracking_gaiadr3", url),
     );
 
+    if (fileLimit) {
+      pendingUrls = pendingUrls.slice(0, fileLimit);
+    }
+
     this.logger.debug(
       `${
-        urls.length - pendingUrls.length
+        allUrls.length - pendingUrls.length
       } files already processed, ${pendingUrls.length} remaining\n`,
     );
 
@@ -228,11 +231,31 @@ export class PopulateCoordinator {
               this.logger.debug(`Skipping already processed: ${result.url}`);
               return { url: result.url, records: [], error: null };
             }
-            this.logger.debug("Reading file:", result.filePath);
-            // Use Rust parser if enabled, otherwise TypeScript
-            const records = this.config.useRustParser
-              ? await streamAndFilterCSVRust(result.filePath, this.config)
-              : await streamAndFilterCSV(result.filePath, this.config);
+
+            const csvStartTime = Date.now();
+
+            // Use FFI parser if enabled, otherwise TypeScript
+            let records: GaiaRecord[];
+            if (this.config.useCParser) {
+              // Dynamically import C FFI only when needed (fastest option)
+              const { streamAndFilterCSVC } = await import("./utils-c.ts");
+              records = await streamAndFilterCSVC(result.filePath, this.config);
+            } else if (this.config.useRustParser) {
+              // Dynamically import Rust FFI only when needed
+              const { streamAndFilterCSVRust } = await import(
+                "./utils-rust.ts"
+              );
+              records = await streamAndFilterCSVRust(
+                result.filePath,
+                this.config,
+              );
+            } else {
+              records = await streamAndFilterCSV(result.filePath, this.config);
+            }
+
+            this.logger.info(
+              `${result.url} processed in ${Date.now() - csvStartTime}ms`,
+            );
 
             // Clean up file if configured
             if (this.config.cleanUpDownloadedFiles) {

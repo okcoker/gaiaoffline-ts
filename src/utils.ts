@@ -31,7 +31,12 @@ async function* streamGzippedCSV(
     }
 
     const csvStream = readable
-      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(
+        new DecompressionStream("gzip") as unknown as ReadableWritablePair<
+          Uint8Array,
+          Uint8Array
+        >,
+      )
       .pipeThrough(new TextDecoderStream())
       .pipeThrough(
         new CsvParseStream({
@@ -50,7 +55,7 @@ async function* streamGzippedCSV(
         // Pre-compute which column indices to keep
         columnIndices = headers
           .map((col, i) => columnsToKeepSet.has(col) ? i : -1)
-          .filter(i => i !== -1);
+          .filter((i) => i !== -1);
         isFirstRow = false;
         continue;
       }
@@ -286,7 +291,12 @@ export async function processTmassXmatchFile(
     const file = await Deno.open(filePath, { read: true });
 
     const csvStream = file.readable
-      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(
+        new DecompressionStream("gzip") as unknown as ReadableWritablePair<
+          Uint8Array,
+          Uint8Array
+        >,
+      )
       .pipeThrough(new TextDecoderStream())
       .pipeThrough(
         new CsvParseStream({
@@ -363,7 +373,12 @@ export async function processTmassFile(
     const file = await Deno.open(filePath, { read: true });
 
     const csvStream = file.readable
-      .pipeThrough(new DecompressionStream("gzip"))
+      .pipeThrough(
+        new DecompressionStream("gzip") as unknown as ReadableWritablePair<
+          Uint8Array,
+          Uint8Array
+        >,
+      )
       .pipeThrough(new TextDecoderStream())
       .pipeThrough(
         new CsvParseStream({
@@ -479,4 +494,3 @@ export const createLogger = (level: LogLevel, tag: string): Logger => {
     },
   };
 };
-
