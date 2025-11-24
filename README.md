@@ -8,11 +8,11 @@ I created this port for usage of the library within a TS project, without having
 
 ## Features
 
-1. **⚡ Parallel Downloads**: Downloads simultaneously (configurable via `--parallel` option)
-1. **🔄 Streamed Downloads**: Automatically downloads and streams contents into local DB without writing (using `--stream`)
-1. **🔄 Resumable Downloads**: Automatically resumes interrupted downloads on subsequent runs (if not using `--stream`)
-1. **⚙️ CLI Configuration**: Pass config via command-line args
-1. **🚀 FFI**: For even faster CSV processing
+1. **Parallel Downloads**: Downloads simultaneously (configurable via `--parallel` option)
+1. **Streamed Downloads**: Automatically downloads and streams contents into local DB without writing (using `--stream`)
+1. **Resumable Downloads**: Automatically resumes interrupted downloads on subsequent runs (if not using `--stream`)
+1. **CLI Configuration**: Pass config via command-line args
+1. **FFI**: For even faster CSV processing
 
 ## Installation
 
@@ -68,7 +68,7 @@ deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-
   - `populate:gaia` - Download and populate the database with Gaia DR3 data only
   - `populate:tmass-xmatch` - Download and populate the database 2MASS crossmatch only
   - `populate:tmass` - Download and populate the database 2MASS magnitudes only
-- `query` - Show database statistics
+- `query` - Perform cone search around ra/dec coordinates
 - `stats` - Show database statistics
 
 ## Performance
@@ -119,10 +119,6 @@ teff_gspphot, logg_gspphot, mh_gspphot
 
 Default magnitude limit: 16 (stores stars brighter than magnitude 16)
 
-## Contributing
-
-This is a port of the [gaiaoffline](https://github.com/jpdeleon/gaiaoffline) Python library.
-
 ## License
 
-MIT License (same as original Python version)
+MIT License (same as [original](https://github.com/jpdeleon/gaiaoffline) Python version)
