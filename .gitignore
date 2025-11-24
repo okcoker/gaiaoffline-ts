@@ -18,6 +18,7 @@ Thumbs.db
 ffi/tests/test.csv.gz
 ffi/tests/test-c
 ffi/tests/target
+ffi/tests/test-go
 ffi/rust/target
 *.dylib
 *.dll

@@ -26,7 +26,7 @@ console.log("Using Rust FFI parser");
 
 const start = performance.now();
 
-const records = await parseGzippedCsvRust(filePath, columnsToKeep);
+const records = await parseGzippedCsvRust(filePath, columnsToKeep, 0);
 
 const duration = (performance.now() - start) / 1000;
 
@@ -36,4 +36,3 @@ console.log(
 console.log(
   `Rate: ${Math.round(records.length / duration).toLocaleString()} rows/sec`,
 );
-console.log(`Sample record:`, records[0]);

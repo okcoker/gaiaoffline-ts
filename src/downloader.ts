@@ -299,7 +299,9 @@ export class ParallelDownloader {
 
         if (!isRetryable || attempt === maxRetries) {
           this.logger.error(
-            `Failed to stream ${url} after ${attempt + 1} attempts: ${lastError.message}`,
+            `Failed to stream ${url} after ${
+              attempt + 1
+            } attempts: ${lastError.message}`,
           );
           throw lastError;
         }
@@ -315,6 +317,7 @@ export class ParallelDownloader {
 
   /**
    * Check if an error is retryable (network issues, timeouts, etc.)
+   * TODO: create custom errors
    */
   private isRetryableError(error: Error): boolean {
     const message = error.message.toLowerCase();

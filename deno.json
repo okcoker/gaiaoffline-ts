@@ -1,10 +1,11 @@
 {
   "tasks": {
-    "start": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts",
     "populate": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate",
     "populate:gaia": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate:gaia",
+    "populate:tmass-xmatch": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate:tmass-xmatch",
+    "populate:tmass": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts populate:tmass",
     "populate:debug": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi --inspect-brk src/cli.ts populate",
-    "query": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts query",
+    "stats": "deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts stats",
     "build": "deno compile --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts --output dist/gaiaoffline"
   },
   "imports": {

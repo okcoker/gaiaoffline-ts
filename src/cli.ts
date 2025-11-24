@@ -35,7 +35,7 @@ async function main(): Promise<void> {
         break;
 
       case "query":
-        queryCommand(config);
+        queryCommand(config, args.slice(1));
         break;
 
       case "stats":

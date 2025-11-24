@@ -3,6 +3,8 @@
  * Lazy-loaded to avoid requiring --allow-ffi unless actually used
  */
 
+import { join } from "@std/path";
+
 const libPath = Deno.build.os === "darwin"
   ? "./ffi/rust/target/release/libgaia_csv_parser.dylib"
   : Deno.build.os === "windows"
@@ -27,7 +29,8 @@ let lib:
  */
 function getRustLib() {
   if (!lib) {
-    lib = Deno.dlopen(libPath, {
+    const fullPath = join(Deno.cwd(), "../../", libPath);
+    lib = Deno.dlopen(fullPath, {
       parse_gzipped_csv: {
         parameters: ["pointer", "pointer", "usize"],
         result: "pointer",

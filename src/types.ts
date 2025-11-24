@@ -185,3 +185,5 @@ export type Logger = {
   info(...args: unknown[]): void;
   debug(...args: unknown[]): void;
 };
+
+export type PhotometryOutput = "flux" | "magnitude";

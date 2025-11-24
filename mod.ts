@@ -1,20 +1,22 @@
 /**
  * Gaia Offline - TypeScript/Deno Port
  *
- * A high-performance library for querying Gaia DR3 star catalog data locally.
+ * A TS library for querying Gaia DR3 star catalog data locally.
  *
  * @example
  * ```ts
- * import { createGaia, DEFAULT_CONFIG } from "./mod.ts";
+ * import { createGaia } from "./mod.ts";
  *
- * const gaia = createGaia(DEFAULT_CONFIG, {
+ * const instance = createGaia({
  *   photometryOutput: "magnitude",
  *   magnitudeLimit: [-3, 20],
  * });
  *
- * const results = gaia.coneSearch(45, 6, 0.2);
- * console.log(`Found ${results.length} stars`);
- * gaia.close();
+ * instance.run((gaia) => {
+ *   const results = gaia.coneSearch(45, 6, 0.2);
+ *   console.log(`Found ${results.length} stars`);
+ *   gaia.close();
+ * });
  * ```
  *
  * @module
@@ -34,4 +36,4 @@ export type {
   TmassRecord,
   TmassXmatchRecord,
 } from "./src/database.ts";
-export type { GaiaQueryOptions, PhotometryOutput } from "./src/gaia.ts";
+export type { GaiaOptions, PhotometryOutput } from "./src/gaia.ts";

@@ -42,14 +42,22 @@ deno task populate --stream
 deno task populate:gaia --c-ffi --log-level debug
 ```
 
-### 2. Query Database
+### 2. Population Stats
 
 ```bash
-# Run example queries and benchmark
-deno task query
+# Get stats on database population progress
+deno task stats
 
-# View statistics
-deno run --allow-read mod.ts stats --db-path ./gaiaoffline.db
+# View statistics on a specific database
+deno task stats --db-path ./mydb.db
+```
+
+### 3. CLI Queries
+
+```bash
+# Query for 10 results around M45
+deno run --allow-net --allow-sys --allow-read --allow-write --allow-env --allow-ffi src/cli.ts query --db-path ./gaia.db --ra 56.75 --dec 24.12 --radius 0.5 --limit 10
+
 ```
 
 ## CLI Reference
@@ -60,25 +68,25 @@ deno run --allow-read mod.ts stats --db-path ./gaiaoffline.db
   - `populate:gaia` - Download and populate the database with Gaia DR3 data only
   - `populate:tmass-xmatch` - Download and populate the database 2MASS crossmatch only
   - `populate:tmass` - Download and populate the database 2MASS magnitudes only
-- `query` - Run interactive example queries
+- `query` - Show database statistics
 - `stats` - Show database statistics
-
 
 ## Performance
 
-On my M3 Max Macbook Pro these are the running times for population
+On my M3 Max Macbook Pro these are the running times for population. These are largely bottlenecked by your network speed when downloading these files. Some may be slow, even on fast connections. Tests for individual CSV parsing can be found in [README.md](./ffi/README.md).
 
 - `populate:gaia` — ~14hours (Could be faster using C/Rust FFI)
 - `populate:tmass-xmatch` — ~5.5hours
-- `populate:tmass` — ~5.5hours
+- `populate:tmass` — ~5hours
 
 ## Usage as Library
 
 ```typescript
 import { createGaia, DEFAULT_CONFIG } from "./mod.ts";
 
-// Create Gaia instance, passing pre-populated local DB.
-const gaia = createGaia("./gaiaoffline.db", DEFAULT_CONFIG, {
+const gaia = createGaia({
+  // Create Gaia instance, passing pre-populated local DB.
+  databasePath: "./gaiaoffline.db",
   photometryOutput: "magnitude",
   magnitudeLimit: [-3, 20],
 });
@@ -102,6 +110,7 @@ gaia.close();
 ## Configuration
 
 Default columns stored:
+
 ```
 source_id, ra, dec, parallax, pmra, pmdec, radial_velocity,
 phot_g_mean_flux, phot_bp_mean_flux, phot_rp_mean_flux,
@@ -109,15 +118,6 @@ teff_gspphot, logg_gspphot, mh_gspphot
 ```
 
 Default magnitude limit: 16 (stores stars brighter than magnitude 16)
-
-## Differences from Python Version
-
-1. ✅ CLI-based configuration (no hardcoded `~/.config` paths)
-2. ✅ Parallel downloads with configurable concurrency
-3. ✅ Resumable downloads using HTTP Range headers
-4. ✅ Real-time progress tracking
-5. ⏳ 2MASS crossmatch (not yet implemented)
-6. ⏳ Full pandas-style data filtering (partially implemented)
 
 ## Contributing
 

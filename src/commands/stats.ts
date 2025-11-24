@@ -9,7 +9,10 @@ import { createGaia } from "../gaia.ts";
 export function statsCommand(config: CLIConfig) {
   console.log("📊 Gaia Offline - Database Statistics\n");
 
-  const instance = createGaia(config);
+  const instance = createGaia({
+    ...config,
+    magnitudeLimit: undefined,
+  });
 
   instance.run((gaia) => {
     const stats = gaia.getStats();
@@ -18,7 +21,7 @@ export function statsCommand(config: CLIConfig) {
     console.log(`Total records: ${stats.totalRecords.toLocaleString()}\n`);
 
     console.log("Tracking Progress:");
-    console.log("─".repeat(60));
+    console.log("─".repeat(30));
 
     for (const [table, progress] of Object.entries(stats.trackingProgress)) {
       if (progress) {

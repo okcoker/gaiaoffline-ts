@@ -1,15 +1,60 @@
-import { GaiaDatabase, type GaiaRecord } from "./database.ts";
-import type { CLIConfig } from "./config.ts";
-import { GaiaColumn } from "./types.ts";
+import {
+  GaiaDatabase,
+  type GaiaRecord,
+  type TrackingProgress,
+} from "./database.ts";
+import { type CLIConfig, DEFAULT_CONFIG } from "./config.ts";
+import type { GaiaColumn, PhotometryOutput } from "./types.ts";
 
-export type PhotometryOutput = "flux" | "magnitude";
-
-export interface GaiaQueryOptions {
+export type GaiaOptions = {
+  /**
+   * Path to the local database
+   * @default ./gaiaoffline.db
+   */
+  databasePath?: CLIConfig["databasePath"];
+  /**
+   * The select columns to store in the database
+   * @default ["source_id", "ra", "dec", "parallax", "pmra", "pmdec", "radial_velocity", "phot_g_mean_flux", "phot_bp_mean_flux", "phot_rp_mean_flux", "teff_gspphot", "logg_gspphot", "mh_gspphot"]
+   */
+  storedColumns?: CLIConfig["storedColumns"];
+  /**
+   * The zeropoints for the photometry
+   * @default [25.6873668671, 25.3385422158, 24.7478955012]
+   */
+  zeropoints?: CLIConfig["zeropoints"];
+  /**
+   * The log level
+   * @default "INFO"
+   */
+  logLevel?: CLIConfig["logLevel"];
+  /**
+   * The magnitude limit for the photometry
+   * @default [-3, 20]
+   */
   magnitudeLimit?: [number, number];
+  /**
+   * The limit for the query
+   * @default 0
+   */
   limit?: number;
+  /**
+   * The photometry output
+   * @default "flux"
+   */
   photometryOutput?: PhotometryOutput;
+  /**
+   * Whether to use 2MASS crossmatch
+   * @default false
+   */
   tmassCrossmatch?: boolean;
-}
+};
+
+// 2MASS zeropoints (Vega system)
+const tmassZeropoints = {
+  j: 20.86650085,
+  h: 20.6576004,
+  k: 20.04360008,
+};
 
 /**
  * Gaia offline query interface
@@ -17,18 +62,20 @@ export interface GaiaQueryOptions {
  */
 export class Gaia {
   private db: GaiaDatabase;
-  private config: CLIConfig;
-  private options: Required<GaiaQueryOptions>;
+  private options: Required<GaiaOptions>;
 
-  constructor(config: CLIConfig, options: GaiaQueryOptions = {}) {
-    this.db = new GaiaDatabase(config);
-    this.config = config;
+  constructor(options: GaiaOptions = {}) {
     this.options = {
       magnitudeLimit: options.magnitudeLimit || [-3, 20],
       limit: options.limit || 0,
       photometryOutput: options.photometryOutput || "flux",
       tmassCrossmatch: options.tmassCrossmatch || false,
+      databasePath: options.databasePath || DEFAULT_CONFIG.databasePath,
+      storedColumns: options.storedColumns || DEFAULT_CONFIG.storedColumns,
+      zeropoints: options.zeropoints || DEFAULT_CONFIG.zeropoints,
+      logLevel: options.logLevel || DEFAULT_CONFIG.logLevel,
     };
+    this.db = new GaiaDatabase(this.options);
 
     // Check if 2MASS table exists if crossmatch is requested
     if (this.options.tmassCrossmatch && !this.db.hasTmassTable()) {
@@ -98,7 +145,7 @@ export class Gaia {
         for (const band of bands) {
           const flux = record[band.flux] as number;
           if (flux && flux > 0) {
-            const zeropoint = this.config.zeropoints[band.zp];
+            const zeropoint = this.options.zeropoints[band.zp];
             cleaned[band.mag] = zeropoint - 2.5 * Math.log10(flux);
 
             // Calculate magnitude error if flux error exists
@@ -128,18 +175,13 @@ export class Gaia {
 
         return cleaned;
       });
-    } else if (this.options.photometryOutput === "flux") {
+    }
+
+    if (this.options.photometryOutput === "flux") {
       // Convert 2MASS magnitudes to flux if needed
       if (this.options.tmassCrossmatch) {
         return records.map((record) => {
           const cleaned = { ...record };
-
-          // 2MASS zeropoints (Vega system)
-          const tmassZeropoints = {
-            j: 20.86650085,
-            h: 20.6576004,
-            k: 20.04360008,
-          };
 
           if (cleaned.j_m !== null && cleaned.j_m !== undefined) {
             const jMag = Number(cleaned.j_m);
@@ -172,7 +214,7 @@ export class Gaia {
    */
   getStats(): {
     totalRecords: number;
-    trackingProgress: { [key: string]: any };
+    trackingProgress: { [key: string]: TrackingProgress | null };
   } {
     const totalRecords = this.db.getRecordCount();
 
@@ -182,7 +224,7 @@ export class Gaia {
       "file_tracking_tmass",
     ];
 
-    const trackingProgress: { [key: string]: any } = {};
+    const trackingProgress: { [key: string]: TrackingProgress | null } = {};
 
     for (const table of trackingTables) {
       try {
@@ -203,7 +245,7 @@ export class Gaia {
    * Get column names from the database
    */
   getColumnNames(): GaiaColumn[] {
-    return this.config.storedColumns;
+    return this.options.storedColumns;
   }
 
   /**
@@ -232,16 +274,22 @@ interface WithGaiaCallback<T = void> {
   (gaia: Gaia): T | Promise<T>;
 }
 
+interface GaiaRunner {
+  run<T>(withGaia: (gaia: Gaia) => T): T;
+  run<T>(withGaia: (gaia: Gaia) => Promise<T>): Promise<T>;
+}
+
 /**
  * Convenience function to create a Gaia instance
+ * @param options - The options for the Gaia instance
+ * @returns The Gaia instance
  */
 export function createGaia(
-  config: CLIConfig,
-  options?: GaiaQueryOptions,
-) {
+  options?: GaiaOptions,
+): GaiaRunner {
   return {
-    run(withGaia: WithGaiaCallback) {
-      const g = new Gaia(config, options);
+    run<T>(withGaia: WithGaiaCallback<T>): T | Promise<T> {
+      const g = new Gaia(options);
       try {
         const result = withGaia(g);
         if (result instanceof Promise) {

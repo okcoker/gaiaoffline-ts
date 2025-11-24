@@ -26,7 +26,7 @@ console.log("Using C FFI parser");
 
 const start = performance.now();
 
-const records = await parseGzippedCsvC(filePath, columnsToKeep);
+const records = await parseGzippedCsvC(filePath, columnsToKeep, 0);
 
 const duration = (performance.now() - start) / 1000;
 
@@ -36,4 +36,3 @@ console.log(
 console.log(
   `Rate: ${Math.round(records.length / duration).toLocaleString()} rows/sec`,
 );
-console.log(`Sample record:`, records[0]);

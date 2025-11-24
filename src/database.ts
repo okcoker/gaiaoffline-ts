@@ -1,6 +1,6 @@
 import { Database } from "@db/sqlite";
 import type { CLIConfig } from "./config.ts";
-import { Logger } from "./types.ts";
+import type { Logger } from "./types.ts";
 import { createLogger, formatDuration } from "./utils.ts";
 
 export interface FileTrackingRecord {
@@ -27,13 +27,24 @@ export interface TmassRecord {
   h_m: number | null;
   k_m: number | null;
 }
+export interface TrackingProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  pending: number;
+}
+
+export type GaiaDatabaseOptions = Pick<
+  CLIConfig,
+  "databasePath" | "logLevel" | "storedColumns" | "zeropoints"
+>;
 
 export class GaiaDatabase {
   private db: Database;
-  private config: CLIConfig;
+  private config: GaiaDatabaseOptions;
   private logger: Logger;
 
-  constructor(config: CLIConfig) {
+  constructor(config: GaiaDatabaseOptions) {
     this.db = new Database(config.databasePath);
     this.config = config;
     this.logger = createLogger(config.logLevel, "Database");
@@ -153,12 +164,7 @@ export class GaiaDatabase {
   /**
    * Get tracking progress
    */
-  getTrackingProgress(tableName: string): {
-    total: number;
-    completed: number;
-    failed: number;
-    pending: number;
-  } {
+  getTrackingProgress(tableName: string): TrackingProgress {
     const result = this.db.prepare(`
       SELECT
         COUNT(*) as total,
@@ -409,7 +415,7 @@ export class GaiaDatabase {
     const query =
       `SELECT ${selectClause} FROM ${fromClause} WHERE ${whereClause}`;
 
-    const results = this.db.prepare(query).all() as GaiaRecord[];
+    const results = this.db.prepare(query).all<GaiaRecord>();
     const duration = Date.now() - startTime;
     this.logger.debug(
       `Cone search completed in ${formatDuration(duration)}`,

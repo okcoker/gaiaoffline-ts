@@ -398,7 +398,7 @@ export class PopulateCoordinator {
     // Check if gaiadr3 table exists
     if (this.db.getRecordCount("gaiadr3") === 0) {
       throw new Error(
-        "Gaia DR3 table is empty. Run populateGaiaDR3 first.",
+        "Gaia DR3 table is empty. Run `populate:gaia` first.",
       );
     }
 
@@ -464,7 +464,7 @@ export class PopulateCoordinator {
     // Check if tmass_xmatch table exists and has data
     if (this.db.getRecordCount("tmass_xmatch") === 0) {
       throw new Error(
-        "2MASS crossmatch table is empty. Run populateTmassXmatch first.",
+        "2MASS crossmatch table is empty. Run `populate:tmass-xmatch` first.",
       );
     }
 

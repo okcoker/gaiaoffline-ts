@@ -1,88 +1,94 @@
 import type { CLIConfig } from "../config.ts";
 import { createGaia } from "../gaia.ts";
+import { parseArgs } from "@std/cli/parse-args";
+import { PhotometryOutput } from "../types.ts";
 
 /**
  * Query the database with the Gaia DR3 data
  * @param config - The configuration for the database
+ * @param args - The arguments for the command
  * @returns void
  */
-export function queryCommand(config: CLIConfig) {
-  console.log("🔍 Gaia Offline - Query Interface\n");
-
-  const instance = createGaia(config, {
-    photometryOutput: "magnitude",
-    magnitudeLimit: [-3, 20],
+export function queryCommand(config: CLIConfig, args: string[]) {
+  const parsed = parseArgs(args, {
+    string: [
+      "ra",
+      "dec",
+      "radius",
+      "magnitude-limit",
+      "limit",
+      "photometry",
+    ],
+    boolean: [
+      "xmatch",
+    ],
   });
 
-  instance.run((gaia) => {
-    // Get stats
-    const stats = gaia.getStats();
-    console.log(`Database: ${config.databasePath}`);
-    console.log(`Total records: ${stats.totalRecords.toLocaleString()}\n`);
+  if (!parsed.ra) {
+    throw new Error("--ra is required");
+  }
 
-    // Check if tracking info exists
-    if (stats.trackingProgress.file_tracking_gaiadr3) {
-      const progress = stats.trackingProgress.file_tracking_gaiadr3;
-      const percentage = progress.total > 0
-        ? ((progress.completed / progress.total) * 100).toFixed(1)
-        : "0";
-      console.log(`Database population: ${percentage}% complete`);
-      console.log(
-        `  Completed: ${progress.completed}, Failed: ${progress.failed}, Pending: ${progress.pending}\n`,
-      );
-    }
+  const ra = parseFloat(parsed.ra);
 
-    // Example query
-    console.log("📍 Example: Cone search around RA=45°, Dec=6°, radius=0.2°");
-    console.log("   (This searches for stars in the Hyades cluster region)\n");
+  if (!parsed.dec) {
+    throw new Error("--dec is required");
+  }
 
-    const start = Date.now();
-    const results = gaia.coneSearch(45, 6, 0.2);
-    const duration = Date.now() - start;
+  const dec = parseFloat(parsed.dec);
 
-    console.log(`Found ${results.length} stars in ${duration}ms`);
+  if (!parsed.radius) {
+    throw new Error("--radius is required");
+  }
 
-    if (results.length > 0) {
-      console.log("\nFirst 5 results:");
-      console.log(
-        "─".repeat(80),
-      );
+  const radius = parseFloat(parsed.radius);
 
-      for (let i = 0; i < Math.min(5, results.length); i++) {
-        const star = results[i];
-        console.log(`Star ${i + 1}:`);
-        console.log(`  Source ID: ${star.source_id}`);
-        console.log(`  RA:        ${star.ra.toFixed(6)}°`);
-        console.log(`  Dec:       ${star.dec.toFixed(6)}°`);
-
-        if (star.phot_g_mean_mag) {
-          console.log(
-            `  G mag:     ${Number(star.phot_g_mean_mag).toFixed(3)}`,
-          );
-        }
-
-        if (star.parallax) {
-          console.log(`  Parallax:  ${Number(star.parallax).toFixed(3)} mas`);
-        }
-
-        console.log();
-      }
-    }
-
-    // Benchmark
-    console.log("🏃 Running benchmark (100 queries)...");
-    const avgTime = gaia.benchmark(100);
-    console.log(`Average query time: ${avgTime.toFixed(2)}ms\n`);
-
-    console.log("💡 To run custom queries, you can use the Gaia class:");
-    console.log(`
-import { createGaia } from "./gaia.ts";
-import { DEFAULT_CONFIG } from "./config.ts";
-
-const gaia = createGaia("${config.databasePath}", DEFAULT_CONFIG);
-const results = gaia.coneSearch(ra, dec, radius);
-console.log(results);
-gaia.close();
-    `);
+  const instance = createGaia({
+    ...config,
+    limit: Number(parsed.limit) ?? 0,
+    photometryOutput: getPhotometryOutput(parsed.photometry),
+    magnitudeLimit: getMagnitudeLimit(parsed["magnitude-limit"]) ?? [-3, 20],
+    tmassCrossmatch: parsed["xmatch"],
   });
+
+  const results = instance.run((gaia) => {
+    return gaia.coneSearch(ra, dec, radius);
+  });
+
+  console.log(results);
+}
+
+function getPhotometryOutput(
+  photometry?: string,
+): PhotometryOutput | undefined {
+  if (!photometry) {
+    return undefined;
+  }
+
+  if (photometry === "flux") {
+    return "flux";
+  }
+
+  if (photometry === "magnitude") {
+    return "magnitude";
+  }
+
+  throw new Error(
+    `Invalid photometry output: ${photometry}. Must be "flux" or "magnitude".`,
+  );
+}
+
+function getMagnitudeLimit(magLimit?: string): [number, number] | undefined {
+  if (!magLimit) {
+    return undefined;
+  }
+
+  const [minMag, maxMag] = magLimit.split(",").map(Number);
+
+  if (isNaN(minMag) || isNaN(maxMag)) {
+    throw new Error(
+      `Invalid magnitude limit: ${magLimit}. Must be a comma-separated list of two numbers.`,
+    );
+  }
+
+  return [minMag, maxMag];
 }
